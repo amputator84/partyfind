@@ -8,7 +8,7 @@ import csv
 access_token = '123'
 
 # Так как в ограничении ВК берутся первые 999 записей, придётся искать не по пробелу, а по разным словам в цикле. Так затронется больше тус
-search_query = ['рок', 'тусовка', ' ', 'пати', 'квартирник', 'концерт', 'выступление']
+search_query = ['рок', 'тусовка', ' ', 'квартирник', 'концерт', 'выступление', 'фест', 'шоу', 'дискотека', 'вечеринка', 'посиделки', 'баттл', 'флешмоб', 'выставка', 'выпускной', 'карнавал']
 cities = [1,2,25,49,64,97,99,104,144]
 arr_all = []
 arr_all_fin = []
@@ -18,6 +18,7 @@ for city_id in cities:
     time.sleep(0.2)
     for q in search_query:
         time.sleep(0.1)
+        print(str(city_id) + ' - ' + q)
         events_url = f'https://api.vk.com/method/groups.search?q={q}&access_token={access_token}&v=5.199&type=event&city_id={city_id}&future=1&count=999'
         #print(events_url)
         response = requests.get(events_url)
