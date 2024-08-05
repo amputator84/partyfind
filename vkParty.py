@@ -4,23 +4,25 @@ import datetime
 import json
 import csv
 
-#https://oauth.vk.com/authorize?client_id=8143518&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token
+# https://oauth.vk.com/authorize?client_id=8143518&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token
 access_token = '123'
 
 # Так как в ограничении ВК берутся первые 999 записей, придётся искать не по пробелу, а по разным словам в цикле. Так затронется больше тус
-search_query = ['рок', 'тусовка', ' ', 'квартирник', 'концерт', 'выступление', 'фест', 'шоу', 'дискотека', 'вечеринка', 'посиделки', 'баттл', 'флешмоб', 'выставка', 'выпускной', 'карнавал']
-cities = [1,2,25,49,64,97,99,104,144]
+search_query = ['рок', 'тусовка', ' ', 'квартирник', 'концерт', 'выступление', 'фест', 'шоу', 'дискотека', 'вечеринка',
+                'посиделки', 'баттл', 'флешмоб', 'выставка', 'выпускной', 'карнавал']
+cities = [1, 2, 25, 49, 64, 97, 99, 104, 144]
 arr_all = []
 arr_all_fin = []
+events_url = ''
 
 for city_id in cities:
+    print(events_url)
     # ставим паузы, чтоб не ДДОСить
-    time.sleep(0.2)
+    time.sleep(0.3)
     for q in search_query:
-        time.sleep(0.1)
-        print(str(city_id) + ' - ' + q)
+        time.sleep(0.3)
+        #print(str(city_id) + ' - ' + q)
         events_url = f'https://api.vk.com/method/groups.search?q={q}&access_token={access_token}&v=5.199&type=event&city_id={city_id}&future=1&count=999'
-        #print(events_url)
         response = requests.get(events_url)
         data = response.json()
 
@@ -29,7 +31,7 @@ for city_id in cities:
             exit()
 
         for group in data['response']['items']:
-            #print(city_id)
+            # print(city_id)
             group['city'] = city_id
             arr_all.append(group)
 print('Количество тус = ' + str(len(arr_all)))
@@ -42,26 +44,26 @@ print('Количество тус2 = ' + str(len(arr_all)))
 
 group_ids = [str(group['id']) for group in arr_all]
 # режем по 500 записей. Ограничение ВК
-group_ids_chunks = [group_ids[i:i+500] for i in range(0, len(group_ids), 500)]
+group_ids_chunks = [group_ids[i:i + 500] for i in range(0, len(group_ids), 500)]
 
 for group_ids_chunk in group_ids_chunks:
     time.sleep(0.2)
     group_ids_str = ','.join(group_ids_chunk)
     group_info_url = f'https://api.vk.com/method/groups.getById?group_ids={group_ids_str}&fields=start_date,description,city&access_token={access_token}&v=5.199'
-    #print(group_info_url)
-    #print()
+    # print(group_info_url)
+    # print()
     response = requests.get(group_info_url)
     data = response.json()
-    #print('Количество общее = ' + str(len(data['response']['groups'])))
+    # print('Количество общее = ' + str(len(data['response']['groups'])))
 
     # Фильтрация элементов, у которых есть поле "city"
     filtered_groups = [group for group in data['response']['groups'] if 'city' in group]
 
     # Сортировка по значениям "city.title" и "start_date"
-    #sorted_groups = sorted(filtered_groups, key=lambda x: (x['city']['title'], x['start_date']))
+    # sorted_groups = sorted(filtered_groups, key=lambda x: (x['city']['title'], x['start_date']))
 
     # Вывод отсортированного массива
-    #print(sorted_groups)
+    # print(sorted_groups)
 
     # Вывод результатов
     city_name2 = ''
@@ -74,16 +76,16 @@ for group_ids_chunk in group_ids_chunks:
         start_date = datetime.datetime.fromtimestamp(group_info['start_date'])
         group_description = group_info['description']
         if city_name != city_name2:
-            #print(f'Город - {city_name}')
+            # print(f'Город - {city_name}')
             city_name2 = city_name
-        #print(f'name - {group_name}')
-        #print(f'{group_name} https://vk.com/event{group_id} {start_date.day}.{start_date.month}.{start_date.year}')
-        #print(f'description - {group_description}')
-        #print()
+        # print(f'name - {group_name}')
+        # print(f'{group_name} https://vk.com/event{group_id} {start_date.day}.{start_date.month}.{start_date.year}')
+        # print(f'description - {group_description}')
+        # print()
         arr_all_fin.append({
             "name_rus": city_name,
             "name": group_name,
-            "link": '=HYPERLINK("https://vk.com/'+str(group_screen_name)+'")', #TODO club/event
+            "link": '=HYPERLINK("https://vk.com/' + str(group_screen_name) + '")',  # TODO club/event
             "date_format": f'{start_date.day}.{start_date.month}.{start_date.year}',
             "clear": "",
             "description": group_description,
@@ -103,7 +105,7 @@ with open(file_name, mode='w', encoding='utf-8', newline='') as csv_file:
         writer.writerow(row)
 
 print(f'Массив данных был успешно выгружен в файл {file_name}')
-    
+
 """
 Есть скрипт на python:
 
@@ -140,7 +142,7 @@ arr_all = list({group['id']: group for group in arr_all}.values())
 
 # Сортировка по city
 arr_all.sort(key=lambda x: x['city'])
-        
+
 Нужно модифицировать скрипт. Из arr_all брать по 500 записей и искать дополнительную информацию по ID (в https://api.vk.com/method/groups.getById?group_ids=187569150,225562379&fields=start_date,description&access_token={access_token}&v=5.199), записанным через запятую в group_ids. Дополнительные поля - start_date,description.
 По итогу нужно сформировать список, выглядящий так:
 

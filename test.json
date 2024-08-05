@@ -1,0 +1,41 @@
+{
+  "one_time": false,
+  "buttons": [
+    [
+      {
+        "action": {
+          "type": "text",
+          "label": "Тусы на эту неделю",
+          "payload": "1"
+        }
+      }
+    ],
+    [
+      {
+        "action": {
+          "type": "text",
+          "label": "Тусы на всё время",
+          "payload": "2"
+        }
+      }
+    ],
+    [
+      {
+        "action": {
+          "type": "text",
+          "label": "Эпичные тусы",
+          "payload": "3"
+        }
+      }
+    ],
+    [
+      {
+        "action": {
+          "type": "text",
+          "label": "Назад",
+          "payload": "4"
+        }
+      }
+    ]
+  ]
+}
