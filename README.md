@@ -1,2 +1,2 @@
-# partyfind
-second repo partyfind
+# tusinavihi
+Тусы на выхи в СФО
