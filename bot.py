@@ -7,7 +7,8 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 import csv
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
 
 # Токен бота
 API_TOKEN = '123'
@@ -23,7 +24,7 @@ dp = Dispatcher(bot, storage=storage)
 #arrWord = ['й','ц','у','к','е','н','г','ш','щ','з','х','ф','в','а','п','р','о','л','д','ж','э','я','ч','с','м','и','т','б','.',',','q',' ','q','w','e','r','t','y','u','i','o','p','a','s','d','f','g','h','j','k','l','z','x','c','v','b','n','m','1','2','3','4','5','6','7','8','9','0']
 
 
-vkToken = '123'  
+vkToken = '234'  
 vkApi = '5.131'
 arrWord = ['а','о','1']
 
@@ -61,19 +62,76 @@ def get_group_info(group_ids):
         time.sleep(1)  # Задержка
     return group_info
 
-def get_info_from_groups(groups):
-    events = ''
+def get_info_from_groups(groups, week):
+    events_by_date = defaultdict(list)
+    
+    # Сбор событий по датам
     for event in groups:
-        try:
-            start_date = event.get('start_date')
-            if start_date and start_date > int(datetime.now().timestamp()):
-                start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
-                screen_name_link = event.get('screen_name')
-                name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
-                events += f"{start_date_formatted} \n [{name}](https://vk.com/{screen_name_link}) \n"
-        except Exception as e:
-            print(f"Ошибка при обработке события: {e}")
-    return events
+        if week == 1:
+            try:
+                start_date = event.get('start_date')
+                today = datetime.now()
+                start_of_week = today - timedelta(days=today.weekday())  # Понедельник
+                end_of_week = start_of_week + timedelta(days=6)  # Воскресенье
+                if start_date and start_date > int(datetime.now().timestamp()):
+                    start_date_dt = datetime.fromtimestamp(start_date)
+                    
+                    # Проверяем, попадает ли событие на текущую неделю
+                    if start_of_week <= start_date_dt <= end_of_week:
+                        start_date_formatted = start_date_dt.strftime('%d.%m.%Y')
+                        day_of_week = start_date_dt.strftime('%A')
+                        screen_name_link = event.get('screen_name')
+                        name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
+                        
+                        events_by_date[start_date_formatted].append((day_of_week, name, screen_name_link))
+            except Exception as e:
+                print(f"Ошибка при обработке события: {e}")
+        else:
+            try:
+                start_date = event.get('start_date')
+                if start_date and start_date > int(datetime.now().timestamp()):
+                    start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
+                    day_of_week = datetime.fromtimestamp(start_date).strftime('%A')
+                    screen_name_link = event.get('screen_name')
+                    name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
+                    
+                    events_by_date[start_date_formatted].append((day_of_week, name, screen_name_link))
+            except Exception as e:
+                print(f"Ошибка при обработке события: {e}")
+
+    # Составляем финальное сообщение
+    messages = ''
+    message = ''
+    max_length = 4096  # Максимальная длина сообщения в Telegram
+    
+    day_of_week_rus = {
+        'Monday': 'Понедельник',
+        'Tuesday': 'Вторник',
+        'Wednesday': 'Среда',
+        'Thursday': 'Четверг',
+        'Friday': 'Пятница',
+        'Saturday': 'Суббота',
+        'Sunday': 'Воскресенье'
+    }
+    
+    for date in sorted(events_by_date.keys(), key=lambda x: datetime.strptime(x, '%d.%m.%Y')):
+        day_of_week = day_of_week_rus[events_by_date[date][0][0]]
+        
+        # Добавляем дату и события в сообщение
+        message += f"\n{day_of_week} {date} \n"
+        for event in events_by_date[date]:
+            message += f"[{event[1]}](https://vk.com/{event[2]})\n"
+        
+        # Проверка длины сообщения и деление на части если необходимо
+        if len(message) > max_length:
+            messages += message[:-1]  # Добавляем последнюю часть сообщения без последнего переноса строки
+            message = ''  # Очищаем сообщение
+    
+    # Добавляем последнюю часть сообщения
+    if message:
+        messages += message
+
+    return messages
 
 def get_events(city_id):
     arrLinkVkAll = []
@@ -208,13 +266,22 @@ async def process_callback(callback_query: types.CallbackQuery):
             city_id = get_city(city)
             events = get_events(city_id)
             groups = get_group_info(events)
-            events_from_groups = get_info_from_groups(groups)
+            events_from_groups = get_info_from_groups(groups, 1)
             print(events_from_groups)
             await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {events_from_groups}", reply_markup=main_menu(), parse_mode="Markdown",)
     # Все тусы города
     elif data.startswith("get_events_all_"):
         city = data.split("_")[3]
-        await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
+        #await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
+        if city in cities:
+            await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
+        else:
+            city_id = get_city(city)
+            events = get_events(city_id)
+            groups = get_group_info(events)
+            events_from_groups = get_info_from_groups(groups, 0)
+            print(events_from_groups)
+            await callback_query.message.edit_text(f"Это все тусы для города {city} \n {events_from_groups}", reply_markup=main_menu(), parse_mode="Markdown",)
 
 @dp.message_handler(lambda message: True)
 async def get_text(message: types.Message):
