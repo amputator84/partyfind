@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 # Токен бота
-API_TOKEN = '123'
-vkToken = '321'
+API_TOKEN = '1123'
+vkToken = '234'
 vkApi = '5.131'
 arrWord = ['а','о','1',' ','у', 'и']
 file_path = 'events.csv'
@@ -55,6 +55,8 @@ def get_city(city):
     try:
         data = response.json()
         if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
+            print(58)
+            print(data)
             return data['response']['items'][0]['id']
         else:
             return ''
@@ -166,48 +168,53 @@ def extract_unique_cities(file_path):
 cities = extract_unique_cities('events.csv')
 
 # Главное меню
-def main_menu():
-    keyboard = InlineKeyboardMarkup(row_width=4)
-    keyboard.add(
-        InlineKeyboardButton("Домой", callback_data="start"),
-        InlineKeyboardButton("Поиск города", callback_data="get_city"),
-        InlineKeyboardButton("Города СФО", callback_data="get_cities_from_db"),
-        InlineKeyboardButton("Помощь", callback_data="help")
-    )
+def main_menu(arr = 0):
+    if arr == 0:
+        keyboard = InlineKeyboardMarkup(row_width=4)
+        keyboard.add(
+            InlineKeyboardButton("Домой", callback_data="start"),
+            InlineKeyboardButton("Поиск города", callback_data="get_city"),
+            InlineKeyboardButton("Города СФО", callback_data="get_cities_from_db"),
+            InlineKeyboardButton("Помощь", callback_data="help")
+        )
+    else:
+        keyboard = [InlineKeyboardButton("Домой", callback_data="start"),
+                    InlineKeyboardButton("Поиск города", callback_data="get_city"),
+                    InlineKeyboardButton("Города СФО", callback_data="get_cities_from_db"),
+                    InlineKeyboardButton("Помощь", callback_data="help")]
     return keyboard
     
 def cities_menu(page=0, per_page=4):
-    keyboard = InlineKeyboardMarkup(row_width=4)
+    keyboard = []
     start = page * per_page
     end = start + per_page
 
-    # Добавляем города на текущей странице
-    for city in cities[start:end]:
-        keyboard.insert(InlineKeyboardButton(city, callback_data=f"city_{city}"))
-
     # Проверяем, есть ли предыдущая страница
     if page > 0:
-        keyboard.insert(InlineKeyboardButton("<<", callback_data=f"page_{page - 1}"))
+        keyboard.append(InlineKeyboardButton("<<", callback_data=f"page_{page - 1}"))
 
-    # Проверяем, есть ли следующая страница
-    if end < len(cities):
-        keyboard.insert(InlineKeyboardButton(">>", callback_data=f"page_{page + 1}"))
+    # Добавляем города на текущей странице
+    for city in cities[start:end]:
+        keyboard.append(InlineKeyboardButton(city, callback_data=f"city_{city}"))
 
     # Если это последняя страница и остались города
     if end >= len(cities) and start < len(cities):
         remaining_cities = cities[end:]
         for city in remaining_cities:
-            keyboard.insert(InlineKeyboardButton(city, callback_data=f"city_{city}"))
+            keyboard.append(InlineKeyboardButton(city, callback_data=f"city_{city}"))
+
+    # Проверяем, есть ли следующая страница
+    if end < len(cities):
+        keyboard.append(InlineKeyboardButton(">>", callback_data=f"page_{page + 1}"))
 
     return keyboard
 
 # Меню событий для города
 def events_menu(city):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
+    keyboard = [
         InlineKeyboardButton(f"Тусы недели города {city}", callback_data=f"get_events_week_{city}"),
         InlineKeyboardButton(f"Все тусы города {city}", callback_data=f"get_events_all_{city}")
-    )
+    ]
     return keyboard
 
 # Команда /start
@@ -228,7 +235,8 @@ async def get_city_command(message: types.Message):
 # Команда /get_cities_from_db
 @dp.message_handler(commands=['get_cities_from_db'])
 async def get_cities_from_db_command(message: types.Message):
-    await message.answer("Выберите город из списка:", reply_markup=cities_menu())
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[cities_menu(), main_menu(1)])
+    await message.answer("Выберите город из списка:", reply_markup=keyboard)
 
 # Обработка нажатий на кнопки
 @dp.callback_query_handler(lambda c: True)
@@ -246,7 +254,8 @@ async def process_callback(callback_query: types.CallbackQuery):
 
     # Города СФО
     elif data == "get_cities_from_db":
-        await callback_query.message.edit_text("Выберите город из списка:", reply_markup=cities_menu())
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[cities_menu(), main_menu(1)])
+        await callback_query.message.edit_text("Выберите город из списка:", reply_markup=keyboard)
 
     # Помощь
     elif data == "help":
@@ -255,13 +264,15 @@ async def process_callback(callback_query: types.CallbackQuery):
     # Пагинация городов
     elif data.startswith("page_"):
         page = int(data.split("_")[1])
-        await callback_query.message.edit_text("Выберите город из списка:", reply_markup=cities_menu(page=page))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[cities_menu(page=page), main_menu(1)])
+        await callback_query.message.edit_text("Выберите город из списка:", reply_markup=keyboard) #cities_menu(page=page)
 
     # Выбор города
     elif data.startswith("city_"):
         city = data.split("_")[1]
         if city in cities:
-            await callback_query.message.edit_text(f"Тусы {city} уже есть. Выберите опцию:", reply_markup=events_menu(city))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[events_menu(city),main_menu(1)])
+            await callback_query.message.edit_text(f"Тусы {city} уже есть. Выберите опцию:", reply_markup=keyboard)
         else:
             await callback_query.message.edit_text("Введите другой город", reply_markup=main_menu())
 
@@ -269,21 +280,16 @@ async def process_callback(callback_query: types.CallbackQuery):
     elif data.startswith("get_events_week_"):
         print('get_events_week_')
         city = data.split("_")[3]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[events_menu(city), main_menu(1)])
         if city in cities:
             print(266)
             grouped_events = get_events_from_csv(city, 1)
-            #events = read_csv(file_path)
-            #grouped_events = filter_and_group_events(events, city)
-            #print(grouped_events)
-            #groups = get_group_info(events)
-            #events_from_groups = get_info_from_groups(groups, 1)
-            #print(events_from_groups)
             if (len(grouped_events) == 1):
-                await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {grouped_events[0]}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {grouped_events[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 for message in grouped_events:
                     await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
-                await bot.send_message(callback_query.from_user.id, f"Выше тусы недели для города {city}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await bot.send_message(callback_query.from_user.id, f"Выше тусы недели для города {city}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
         else:
             print(288)
             city_id = get_city(city)
@@ -291,35 +297,25 @@ async def process_callback(callback_query: types.CallbackQuery):
             groups = get_group_info(events)
             events_from_groups = get_info_from_groups(groups, 1)
             if (len(events_from_groups) == 1):
-                await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {events_from_groups[0]}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {events_from_groups[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 for message in events_from_groups:
                     await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
-                await bot.send_message(callback_query.from_user.id, f"Это тусы недели для города {city}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await bot.send_message(callback_query.from_user.id, f"Это тусы недели для города {city}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
     # Все тусы города
     elif data.startswith("get_events_all_"):
         city = data.split("_")[3]
         print(289)
-        #print(get_events_from_csv(city, 0))
         grouped_events = get_events_from_csv(city, 0)
-        
-
-        #await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[events_menu(city), main_menu(1)])
         if city in cities:
             print(305)
-            #if len(grouped_events) > 4096:
-            #    await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
-            #    # тут вставить цикл разделения сообщений с прокидыванием bot и выводом bot.send_message
-            #    await bot.send_message(callback_query.from_user.id, "Первое сообщение")
-            #    await bot.send_message(callback_query.from_user.id, "Второе сообщение")
-            #else:
-            #    await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events}", reply_markup=main_menu())
             if (len(grouped_events) == 1):
-                await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events[0]}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 for message in grouped_events:
                     await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
-                await bot.send_message(callback_query.from_user.id, f"Выше все тусы для города {city}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await bot.send_message(callback_query.from_user.id, f"Выше все тусы для города {city}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
         else:
             print(320)
             city_id = get_city(city)
@@ -327,25 +323,26 @@ async def process_callback(callback_query: types.CallbackQuery):
             groups = get_group_info(events)
             events_from_groups = get_info_from_groups(groups, 0)
             if (len(events_from_groups) == 1):
-                await callback_query.message.edit_text(f"Это все тусы для города {city} \n {events_from_groups[0]}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await callback_query.message.edit_text(f"Это все тусы для города {city} \n {events_from_groups[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 for message in events_from_groups:
                     await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
-                await bot.send_message(callback_query.from_user.id, f"Выше все тусы для города {city}", reply_markup=main_menu(), parse_mode="Markdown",disable_web_page_preview=True)
+                await bot.send_message(callback_query.from_user.id, f"Выше все тусы для города {city}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
 
 @dp.message_handler(lambda message: True)
 async def get_text(message: types.Message):
     print("get_text")
     if message.text in cities:  # Проверяем, есть ли город в массиве
-        #await message.answer("вы ввели "+message.text, reply_markup=main_menu())
-        await message.answer(f"Тусы {message.text} уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[events_menu(message.text),main_menu(1)])
+        await message.answer(f"Тусы {message.text} уже есть. Выберите опцию:", reply_markup=keyboard)
     else:
         # ищем город в ВК. Если не нашли, сообщение
         city_id = get_city(message.text)
         if city_id == '':
             await message.answer("Не нашли такого города, введите другой", reply_markup=main_menu())
         else:
-            await message.answer(f"Город {message.text} найден. Выберите опцию:", reply_markup=events_menu(message.text))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[events_menu(message.text),main_menu(1)])
+            await message.answer(f"Город {message.text} найден. Выберите опцию:", reply_markup=keyboard)
 
 # Функция для чтения CSV файла
 def read_csv(file_path):
@@ -400,10 +397,6 @@ def format_message(grouped_events):
             messages.append(current_part.strip())
     else:
         messages.append(formatted_message)
-
-    #print(377)
-    #print(len(messages))
-    #print(sum(len(message) for message in messages)) # количество символов внутри массива
     return messages
 
 def get_events_from_csv(city, week):
