@@ -15,6 +15,7 @@ API_TOKEN = '1123'
 vkToken = '234'
 vkApi = '5.131'
 arrWord = ['а','о','1',' ','у', 'и']
+#arrWord = ['й','ц','у','к','е','н','г','ш','щ','з','х','ф','в','а','п','р','о','л','д','ж','э','я','ч','с','м','и','т','б','.',',','q',' ','q','w','e','r','t','y','u','i','o','p','a','s','d','f','g','h','j','k','l','z','x','c','v','b','n','m','1','2','3','4','5','6','7','8','9','0']
 file_path = 'events.csv'
 
 # Инициализация бота и диспетчера
@@ -77,42 +78,36 @@ def get_group_info(group_ids):
 
 def get_info_from_groups(groups, week):
     events_by_date = defaultdict(list)
-    print(69)
-    #print(groups)
-    
+    unique_events = set()  # Множество для хранения уникальных идентификаторов событий
+
     # Сбор событий по датам
     for event in groups:
-        if week == 1:
-            try:
-                start_date = event.get('start_date')
-                today = datetime.now()
-                start_of_week = today - timedelta(days=today.weekday())  # Понедельник
-                end_of_week = start_of_week + timedelta(days=6)  # Воскресенье
-                if start_date and start_date > int(datetime.now().timestamp()):
-                    start_date_dt = datetime.fromtimestamp(start_date)
-                    
+        try:
+            start_date = event.get('start_date')
+            today = datetime.now()
+            if start_date and start_date > int(today.timestamp()):
+                start_date_dt = datetime.fromtimestamp(start_date)
+                start_date_formatted = start_date_dt.strftime('%d.%m.%Y')
+                day_of_week = start_date_dt.strftime('%A')
+                screen_name_link = event.get('screen_name')
+                name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
+
+                # Создаем уникальный идентификатор события
+                event_id = (screen_name_link, name)  # Используем screen_name_link и name для уникальности
+
+                if week == 1:
+                    start_of_week = today - timedelta(days=today.weekday())  # Понедельник
+                    end_of_week = start_of_week + timedelta(days=6)  # Воскресенье
                     # Проверяем, попадает ли событие на текущую неделю
-                    if start_of_week <= start_date_dt <= end_of_week:
-                        start_date_formatted = start_date_dt.strftime('%d.%m.%Y')
-                        day_of_week = start_date_dt.strftime('%A')
-                        screen_name_link = event.get('screen_name')
-                        name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
-                        
+                    if start_of_week <= start_date_dt <= end_of_week and event_id not in unique_events:
+                        unique_events.add(event_id)  # Добавляем идентификатор в множество
                         events_by_date[start_date_formatted].append((day_of_week, name, screen_name_link))
-            except Exception as e:
-                print(f"Ошибка при обработке события: {e}")
-        else:
-            try:
-                start_date = event.get('start_date')
-                if start_date and start_date > int(datetime.now().timestamp()):
-                    start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
-                    day_of_week = datetime.fromtimestamp(start_date).strftime('%A')
-                    screen_name_link = event.get('screen_name')
-                    name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
-                    
-                    events_by_date[start_date_formatted].append((day_of_week, name, screen_name_link))
-            except Exception as e:
-                print(f"Ошибка при обработке события: {e}")
+                else:
+                    if event_id not in unique_events:
+                        unique_events.add(event_id)  # Добавляем идентификатор в множество
+                        events_by_date[start_date_formatted].append((day_of_week, name, screen_name_link))
+        except Exception as e:
+            print(f"Ошибка при обработке события: {e}")
 
     message_parts = []
     for date in sorted(events_by_date.keys(), key=lambda x: datetime.strptime(x, '%d.%m.%Y')):
@@ -121,7 +116,7 @@ def get_info_from_groups(groups, week):
         for event in events_by_date[date]:
             message_parts.append(f"[{event[1]}](https://vk.com/{event[2]})")
         message_parts.append("")
-    
+
     formatted_message = "\n".join(message_parts).strip()
     messages = []
 
@@ -286,22 +281,37 @@ async def process_callback(callback_query: types.CallbackQuery):
             if (len(grouped_events) == 1):
                 await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {grouped_events[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
+                i = 0
+                head = ''
                 for message in grouped_events:
+                    if i == 0:
+                        head = f"{city}\n\n"
+                    else:
+                        head = ''
                     await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
+                    i = i + 1
                 await bot.send_message(callback_query.from_user.id, f"Выше тусы недели для города {city}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
         else:
             print(288)
             city = get_city(city)
             city_id = city['id']
             city_title = city['title']
+            await callback_query.message.edit_text(f"Ожидайте", disable_web_page_preview=True)
             events = get_events(city_id)
             groups = get_group_info(events)
             events_from_groups = get_info_from_groups(groups, 1)
             if (len(events_from_groups) == 1):
                 await callback_query.message.edit_text(f"Это тусы недели для города {city_title} \n {events_from_groups[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
+                i = 0
+                head = ''
                 for message in events_from_groups:
+                    if i == 0:
+                        head = f"{city_title}\n\n"
+                    else:
+                        head = ''
                     await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
+                    i = i + 1
                 await bot.send_message(callback_query.from_user.id, f"Это тусы недели для города {city_title}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
     # Все тусы города
     elif data.startswith("get_events_all_"):
@@ -314,8 +324,15 @@ async def process_callback(callback_query: types.CallbackQuery):
             if (len(grouped_events) == 1):
                 await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
+                i = 0
+                head = ''
                 for message in grouped_events:
-                    await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
+                    if i == 0:
+                        head = f"{city}\n\n"
+                    else:
+                        head = ''
+                    await bot.send_message(callback_query.from_user.id, head + message, parse_mode="Markdown",disable_web_page_preview=True)
+                    i = i + 1
                 await bot.send_message(callback_query.from_user.id, f"Выше все тусы для города {city}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
         else:
             print(320)
@@ -328,8 +345,15 @@ async def process_callback(callback_query: types.CallbackQuery):
             if (len(events_from_groups) == 1):
                 await callback_query.message.edit_text(f"Это все тусы для города {city_title} \n {events_from_groups[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
+                i = 0
+                head = ''
                 for message in events_from_groups:
-                    await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
+                    if i == 0:
+                        head = f"{city_title}\n\n"
+                    else:
+                        head = ''
+                    await bot.send_message(callback_query.from_user.id, head + message, parse_mode="Markdown",disable_web_page_preview=True)
+                    i = i + 1
                 await bot.send_message(callback_query.from_user.id, f"Выше все тусы для города {city_title}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
 
 @dp.message_handler(lambda message: True)
@@ -341,8 +365,13 @@ async def get_text(message: types.Message):
     else:
         # ищем город в ВК. Если не нашли, сообщение
         city = get_city(message.text)
-        city_id = city['id']
-        city_title = city['title']
+        if city == '':
+            city_id = ''
+            city_title = ''
+        else:
+            city_id = city['id']
+            city_title = city['title']
+        
         if city_id == '':
             await message.answer("Не нашли такого города, введите другой", reply_markup=main_menu())
         else:
