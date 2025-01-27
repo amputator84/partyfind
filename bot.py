@@ -157,7 +157,10 @@ def extract_unique_cities(file_path):
             city = row['city'].strip()  # Убираем лишние пробелы
             if city:  # Проверяем, что город не пустой
                 cities.add(city)  # Добавляем город в множество
-    return list(cities)  # Преобразуем множество в список
+    
+    # Упорядочиваем города в алфавитном порядке
+    sorted_cities = sorted(cities, key=lambda x: x.lower())  # Сортируем без учета регистра
+    return sorted_cities  # Возвращаем отсортированный список городов
 
 cities = extract_unique_cities('events.csv')
 
@@ -178,7 +181,7 @@ def main_menu(arr = 0):
                     InlineKeyboardButton("Помощь", callback_data="help")]
     return keyboard
     
-def cities_menu(page=0, per_page=4):
+def cities_menu(page=0, per_page=3):
     keyboard = []
     start = page * per_page
     end = start + per_page
@@ -278,7 +281,9 @@ async def process_callback(callback_query: types.CallbackQuery):
         if city in cities:
             print(266)
             grouped_events = get_events_from_csv(city, 1)
-            if (len(grouped_events) == 1):
+            if (grouped_events[0] == ''):
+                await callback_query.message.edit_text(f"Для города {city} нет тус недели, попробуй выбери \"Все тусы\"", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
+            if (len(grouped_events) == 1 and grouped_events[0] != ''):
                 await callback_query.message.edit_text(f"Это тусы недели для города {city} \n {grouped_events[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 i = 0
@@ -296,11 +301,13 @@ async def process_callback(callback_query: types.CallbackQuery):
             city = get_city(city)
             city_id = city['id']
             city_title = city['title']
-            await callback_query.message.edit_text(f"Ожидайте", disable_web_page_preview=True)
+            await callback_query.message.edit_text(f"Ожидайте, идёт сбор тус по городу {city_title}", disable_web_page_preview=True)
             events = get_events(city_id)
             groups = get_group_info(events)
             events_from_groups = get_info_from_groups(groups, 1)
-            if (len(events_from_groups) == 1):
+            if (events_from_groups[0] == ''):
+                await callback_query.message.edit_text(f"Для города {city_title} нет тус недели, попробуй выбери \"Все тусы\"", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
+            if (len(events_from_groups) == 1 and events_from_groups[0] != ''):
                 await callback_query.message.edit_text(f"Это тусы недели для города {city_title} \n {events_from_groups[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 i = 0
@@ -321,7 +328,9 @@ async def process_callback(callback_query: types.CallbackQuery):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[events_menu(city), main_menu(1)])
         if city in cities:
             print(305)
-            if (len(grouped_events) == 1):
+            if (grouped_events[0] == ''):
+                await callback_query.message.edit_text(f"Для города {city} нет тус недели, попробуй выбери \"Все тусы\"", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
+            if (len(grouped_events) == 1 and grouped_events[0] != ''):
                 await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
                 i = 0
@@ -342,9 +351,16 @@ async def process_callback(callback_query: types.CallbackQuery):
             events = get_events(city_id)
             groups = get_group_info(events)
             events_from_groups = get_info_from_groups(groups, 0)
-            if (len(events_from_groups) == 1):
+            if (events_from_groups[0] == ''):
+                print(355)
+                await callback_query.message.edit_text(f"Для города {city_title} нет тус", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
+            elif (len(events_from_groups) == 1 and events_from_groups[0] != ''):
+                print(357)
                 await callback_query.message.edit_text(f"Это все тусы для города {city_title} \n {events_from_groups[0]}", reply_markup=keyboard, parse_mode="Markdown",disable_web_page_preview=True)
             else:
+                print(359)
+                print(events_from_groups)
+                i = 0
                 i = 0
                 head = ''
                 for message in events_from_groups:
