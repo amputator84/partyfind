@@ -1,9 +1,13 @@
+# aiogram 2.25.1
+# python 3.11.0
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.utils import executor
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import csv
 import datetime
+from datetime import timedelta
 import urllib.parse
 import requests
 
@@ -11,14 +15,25 @@ import time
 
 API_TOKEN = '123'
 # токен для поста
-vkToken = '123'
+vkToken = '321'
 # токен для сбора тус по городам из https://oauth.vk.com/blank.html...
-vkTokenAll = '123'
+vkTokenAll = '333'
 vkApi = '5.131'
-arrWord = ['й','ц','у','к','е','н','г','ш','щ','з','х','ф','в','а','п','р','о','л','д','ж','э','я','ч','с','м','и','т','б','.',',','q',' ','q','w','e','r','t','y','u','i','o','p','a','s','d','f','g','h','j','k','l','z','x','c','v','b','n','m','1','2','3','4','5','6','7','8','9','0']
+arrWord = [' ','1']
+#arrWord = ['й','ц','у','к','е','н','г','ш','щ','з','х','ф','в','а','п','р','о','л','д','ж','э','я','ч','с','м','и','т','б','.',',','q',' ','q','w','e','r','t','y','u','i','o','p','a','s','d','f','g','h','j','k','l','z','x','c','v','b','n','m','1','2','3','4','5','6','7','8','9','0']
 cities = ['Абакан','Искитим','Новосибирск','Барнаул','Томск','Омск','Кемерово','Новокузнецк','Красноярск','Междуреченск','Новоалтайск','Горно-Алтайск','Шерегеш','Бердск','Москва','Санкт-Петербург','Екатеринбург']
 owner_id = '111'
 client_id = '222'
+
+day_of_week_rus = {
+    'Monday': 'Понедельник',
+    'Tuesday': 'Вторник',
+    'Wednesday': 'Среда',
+    'Thursday': 'Четверг',
+    'Friday': 'Пятница',
+    'Saturday': 'Суббота',
+    'Sunday': 'Воскресенье'
+}
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +42,38 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
+
+# Главное меню
+def main_menu():
+    keyboard = InlineKeyboardMarkup(row_width=4)
+    keyboard.add(
+        InlineKeyboardButton("Домой", callback_data="start"),
+        InlineKeyboardButton("Поиск города", callback_data="get_city"),
+        InlineKeyboardButton("Города СФО", callback_data="get_cities_from_db"),
+        InlineKeyboardButton("Помощь", callback_data="help")
+    )
+    return keyboard
+
+# Меню событий для города
+def events_menu(city):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton(f"Тусы недели города {city}", callback_data=f"get_events_week_{city}"),
+        InlineKeyboardButton(f"Все тусы города {city}", callback_data=f"get_events_all_{city}")
+    )
+    return keyboard
+
+def extract_unique_cities(file_path):
+    cities = set()  # Используем множество для хранения уникальных городов
+    with open(file_path, mode='r', encoding='utf-8') as file:
+        reader = csv.DictReader(file, delimiter=';')  # Читаем CSV с разделителем ';'
+        for row in reader:
+            city = row['city'].strip()  # Убираем лишние пробелы
+            if city:  # Проверяем, что город не пустой
+                cities.add(city)  # Добавляем город в множество
+    return list(cities)  # Преобразуем множество в список
+
+citiesArr = extract_unique_cities('events.csv')
 
 def get_city_ids(cities):
     city_ids = []
@@ -79,6 +126,81 @@ def get_group_info(group_ids):
             group_info.extend(data['response'])
         time.sleep(1)
     return group_info
+
+# Функция для чтения CSV файла
+def read_csv(file_path):
+    events = []
+    with open(file_path, mode='r', encoding='utf-8') as file:
+        reader = csv.DictReader(file, delimiter=';')
+        for row in reader:
+            events.append(row)
+    return events
+
+def group_events_by_weekday(events, city, week):
+    filtered_events = [event for event in events if event['city'].lower() == city.lower()]
+    for event in filtered_events:
+        event['start_date'] = datetime.datetime.strptime(event['start_date'], '%d.%m.%Y')
+
+    if week == 1:
+        today = datetime.datetime.utcnow()
+        start_of_week = today - timedelta(days=today.weekday())
+        end_of_week = start_of_week + timedelta(days=6)  # Конец недели
+        filtered_events = [event for event in filtered_events if start_of_week <= event['start_date'] <= end_of_week]
+
+    grouped_events = {}
+    for event in filtered_events:
+        weekday = event['start_date'].strftime('%A')
+        if weekday not in grouped_events:
+            grouped_events[weekday] = []
+        grouped_events[weekday].append(event)
+
+    return grouped_events
+
+
+# Функция для формирования сообщения
+def format_message(grouped_events):    
+    message_parts = []
+    for weekday, events in grouped_events.items():
+        message_parts.append(f"{day_of_week_rus[weekday]} {events[0]['start_date'].strftime('%d.%m.%Y')}")
+        for event in events:
+            #message_parts.append(f"{event['name']} ({event['screen_name_link']})")
+            message_parts.append(f"[{event['name']}](https://vk.com/{event['screen_name_link']})")
+            # f"[{event[1]}](https://vk.com/{event[2]})\n"
+        message_parts.append("")  # Добавляем пустую строку для разделения
+
+    #return "\n".join(message_parts).strip()
+    formatted_message = "\n".join(message_parts).strip()
+    messages = ''
+    # Разделяем сообщение, если оно превышает 4096 символов
+    if len(formatted_message) > 4096:
+        # Разбиваем сообщение по строкам
+        message_parts = formatted_message.split('\n')
+        current_part = ""
+        
+        for line in message_parts:
+            # Проверяем, если добавление строки не превышает лимит
+            if len(current_part) + len(line) + 1 <= 4096:  # +1 для символа новой строки
+                current_part += line + '\n'
+            else:
+                # Отправляем текущую часть и начинаем новую
+                #await message.answer(current_part.strip(), parse_mode="Markdown", disable_web_page_preview=True)
+                messages += current_part.strip()
+                current_part = line + '\n'  # Начинаем новую часть с текущей строки
+        
+        # Отправляем оставшуюся часть
+        if current_part:
+            #await message.answer(current_part.strip(), parse_mode="Markdown", disable_web_page_preview=True)
+            messages += current_part.strip()
+    else:
+        #await message.answer(formatted_message, parse_mode="Markdown", disable_web_page_preview=True)
+        messages += formatted_message
+    return messages
+
+def get_events_from_csv(city, week):
+    events = read_csv('events.csv')
+    grouped_events = group_events_by_weekday(events, city, week)
+    formatted_message = format_message(grouped_events)
+    return formatted_message
 
 # Команда /start
 @dp.message_handler(commands=['start'])
@@ -219,6 +341,41 @@ async def handle_button_click(message: types.Message):
             for row in endUrls:
                 writer.writerow(row)
         await message.reply('Добавлено')
+
+# Обработка нажатий на кнопки
+@dp.callback_query_handler(lambda c: True)
+async def process_callback(callback_query: types.CallbackQuery):
+    data = callback_query.data
+    if data.startswith("get_events_week_"):
+        city = data.split("_")[3]
+        grouped_events = get_events_from_csv(city, 1)
+        #await callback_query.message.edit_text(f"Проверка города {city}")
+        #await bot.send_message(callback_query.from_user.id, f"Проверка города {city} - тусы {grouped_events}")
+        await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events}", reply_markup=main_menu(), parse_mode="Markdown", disable_web_page_preview=True)
+    elif data.startswith("get_events_all_"):
+        city = data.split("_")[3]
+        grouped_events = get_events_from_csv(city, 0)
+        if city in cities:
+            if len(grouped_events) > 4096:
+                await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
+                # тут вставить цикл разделения сообщений с прокидыванием bot и выводом bot.send_message
+                await bot.send_message(callback_query.from_user.id, "Первое сообщение")
+                await bot.send_message(callback_query.from_user.id, "Второе сообщение")
+            else:
+                await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events}", reply_markup=main_menu())
+
+@dp.message_handler(lambda message: True)
+async def get_text(message: types.Message):
+    print("get_text")
+    if message.text in citiesArr:  # Проверяем, есть ли город в массиве
+        await message.answer(f"Тусы города {message.text} уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
+    else:
+        city_id = get_city_ids([message.text])
+        print(city_id)
+        if city_id == '' or city_id == False:
+            await message.answer(f"Не нашли город {message.text}, введите другой", reply_markup=main_menu())
+        else:
+            await message.answer(f"Город {message.text} найден. Выберите опцию:", reply_markup=events_menu(message.text))
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
