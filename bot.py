@@ -8,17 +8,12 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import csv
 from datetime import datetime, timedelta
-import pytz
 import urllib.parse
 import requests
-import json
-
 import time
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
 bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
@@ -27,9 +22,6 @@ dp = Dispatcher(bot, storage=storage)
 def main_menu():
     keyboard = InlineKeyboardMarkup(row_width=4)
     keyboard.add(
-        InlineKeyboardButton("Домой", callback_data="start"),
-        InlineKeyboardButton("Поиск города", callback_data="get_city"),
-        InlineKeyboardButton("Города СФО", callback_data="get_cities_from_db"),
         InlineKeyboardButton("Помощь", callback_data="help")
     )
     return keyboard
@@ -43,62 +35,64 @@ def events_menu(city):
     )
     return keyboard
 
+# Список городов из csv
 def extract_unique_cities(file_path):
-    cities = set()  # Используем множество для хранения уникальных городов
+    cities = set()
     with open(file_path, mode='r', encoding='utf-8') as file:
         reader = csv.DictReader(file, delimiter=';')  # Читаем CSV с разделителем ';'
         for row in reader:
-            city = row['city'].strip()  # Убираем лишние пробелы
-            if city:  # Проверяем, что город не пустой
-                cities.add(city)  # Добавляем город в множество
-    return list(cities)  # Преобразуем множество в список
+            city = row['city'].strip()
+            if city:
+                cities.add(city)
+    return list(cities)
 
 cities_csv = extract_unique_cities('events.csv')
 
+# Поиск id городов в ВК. cities = ['Омск','Томск']
 def get_city_ids(cities):
+    print('get_city_ids')
     city_ids = []
     for city in cities:
         response = requests.get(
             'https://api.vk.com/method/database.getCities',
             params={
                 'access_token': config.vk_token_all,
-                'v': config.vkapi,
+                'v': config.vk_api,
                 'country_id': 1,
                 'q': city,
                 'count': 1
             }
         )
-        try:
-            data = response.json()
-            if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
-                city_ids.append(data['response']['items'][0]['id'])
-            else:
-                print(f"Город '{city}' не найден.")
-                return False
-        except Exception as e:
-            print(f"Ошибка {e}")
-        time.sleep(0.5)
+        data = response.json()
+        if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
+            city_ids.append(data['response']['items'][0]['id'])
+        else:
+            print(f"Город '{city}' не найден.")
+            if 'error' in data:
+                print(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
+            return False
+        time.sleep(0.5) # чтоб не DDOS`ить`
     return city_ids
 
+# поиск тус в цикое по словам из word. Каждая итерация максимум по 999 тус
 def get_events(city_id):
-    arrLinkVkAll = []
+    arr_link_vk_all = []
     for word in config.arr_word:
-        urlAll = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vkapi}"
-        print(f"Запрос URL: {urlAll}")
-        response = requests.get(urlAll)
+        url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
+        response = requests.get(url_all)
         data = response.json()
         if 'response' in data and 'items' in data['response']:
             for event in data['response']['items']:
-                arrLinkVkAll.append(event['screen_name'])
+                arr_link_vk_all.append(event['screen_name'])
         time.sleep(0.5)
-    return arrLinkVkAll
+    return arr_link_vk_all
 
+# поиск информации о группе по массиву id. Максимум в одной итерации 500 id
 def get_group_info(group_ids):
     group_info = []
     for i in range(0, len(group_ids), 500):
         groupIds = ','.join(group_ids[i:i + 500])
-        url = f"https://api.vk.com/method/groups.getById/?group_ids={groupIds}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vkapi}"
-        print(f"Запрос URL: {url}") 
+        url = f"https://api.vk.com/method/groups.getById/?group_ids={groupIds}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
         response = requests.get(url)
         data = response.json()
         if 'response' in data:
@@ -115,61 +109,10 @@ def read_csv(file_path):
             events.append(row)
     return events
 
-def group_events_by_weekday3(events, city, week):
-    filtered_events = [event for event in events if event['city'].lower() == city.lower()]
-
-    if week == 1:
-        current_date = datetime.now()
-        start_of_week = current_date - timedelta(days=current_date.weekday())
-        end_of_week = start_of_week + timedelta(days=6)
-
-        filtered_events_arr = []
-        for event in filtered_events:
-            event_date = datetime.strptime(event['start_date'], '%d.%m.%Y')
-            event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
-            
-            if event['city'] == city and start_of_week <= event_date <= end_of_week:
-                filtered_events_arr.append(event)
-        filtered_events = filtered_events_arr #Ý
-
-    #result_json = json.dumps(filtered_events, ensure_ascii=False)
-    grouped_events = {}
-    for event in filtered_events:
-        weekday = event['start_date'].strftime('%A')
-        if weekday not in grouped_events:
-            grouped_events[weekday] = []
-        grouped_events[weekday].append(event)
-
-    print(166)
-    #print(result_json)
-    #return result_json
-    return grouped_events
-
-def group_events_by_weekday2(events, city, week):
-    filtered_events = [event for event in events if event['city'].lower() == city.lower()]
-    print(144)
-    print(filtered_events)
-    for event in filtered_events:
-        event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
-
-    if week == 1:
-        #today = datetime.utcnow()
-        # Получаем текущее время в UTC
-        utc_now = datetime.now(pytz.utc)
-
-        # Преобразуем время в часовой пояс Новосибирска
-        novosibirsk_tz = pytz.timezone('Asia/Novosibirsk')
-        novosibirsk_time = utc_now.astimezone(novosibirsk_tz)
-
-        # Выводим сегодняшнюю дату
-        today = novosibirsk_time.date()
-        print(158)
-        print(today)
-        start_of_week = today - timedelta(days=today.weekday())
-        end_of_week = start_of_week + timedelta(days=6)  # Конец недели
-        filtered_events = [event for event in filtered_events if start_of_week <= event['start_date'] <= end_of_week]
-
+# Возвращает тусы, сгруппированные по дням недели
 def group_events_by_weekday(events, city, week):
+    print('group_events_by_weekday')
+    print(city)
     filtered_events = [event for event in events if event['city'].lower() == city.lower()]
     for event in filtered_events:
         event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
@@ -189,35 +132,7 @@ def group_events_by_weekday(events, city, week):
 
     return grouped_events
 
-# Функция для формирования сообщения
-def format_message5(grouped_events):    
-    message_parts = []
-    print(229)
-    print(grouped_events.items())
-    for weekday, events in grouped_events.items():
-        message_parts.append(f"{config.day_of_week_rus[weekday]} {events[0]['start_date'].strftime('%d.%m.%Y')}")
-        for event in events:
-            message_parts.append(f"[{event['name']}](https://vk.com/{event['screen_name_link']})")
-        message_parts.append("")
-    
-    formatted_message = "\n".join(message_parts).strip()
-    messages = []
-
-    if len(formatted_message) > 4096:
-        message_parts = formatted_message.split('\n')
-        current_part = ""
-        for line in message_parts:
-            if len(current_part) + len(line) + 1 <= 4096:
-                current_part += line + '\n'
-            else:
-                messages.append(current_part.strip())
-                current_part = line + '\n'
-        if current_part:
-            messages.append(current_part.strip())
-    else:
-        messages.append(formatted_message)
-    return messages
-
+# Группировка по датам и дням недели, проставление ссылок, обрезка длинных сообщений
 def format_message(grouped_events, week):
     message_parts = []
 
@@ -236,7 +151,6 @@ def format_message(grouped_events, week):
         
         min_date = min(all_dates)
         max_date = max(all_dates)
-        
         current_date = min_date
         
         while current_date <= max_date:
@@ -254,13 +168,12 @@ def format_message(grouped_events, week):
                 for event in events_today:
                     message_parts.append(f"[{event['name']}](https://vk.com/{event['screen_name_link']})")
                 message_parts.append("")
-            
-            # Переходим к следующему дню
             current_date += timedelta(days=1)
     
     formatted_message = "\n".join(message_parts).strip()
     messages = []
     
+    # Ограничение одного сообщения telegram
     if len(formatted_message) > 4096:
         message_parts = formatted_message.split('\n')
         current_part = ""
@@ -277,13 +190,66 @@ def format_message(grouped_events, week):
     
     return messages
 
+# Возвращаем форматированные тусы из csv
 def get_events_from_csv(city, week):
     events = read_csv('events.csv')
     grouped_events = group_events_by_weekday(events, city, week)
-    print(191)
-    #print(grouped_events)
     formatted_message = format_message(grouped_events, week)
     return formatted_message
+
+# Возвращаем форматированные тусы из VK
+def get_events_from_city_web(city, week):
+    end_urls = []
+    unique_events = set()
+    city_id = get_city_ids([city])[0] # ищем по одному элементу массива
+    arr_link_vk_all = get_events(city_id)
+    group_info = get_group_info(arr_link_vk_all)
+    for event in group_info:
+        try:
+            start_date = event.get('start_date')
+            city_event = event.get('city', {})
+            if start_date and start_date > int(datetime.now().timestamp()):
+                start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
+                screen_name_link = event.get('screen_name')
+                name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
+
+                if city_event.get('title'):
+                    event_tuple = (city_event['title'], name, start_date_formatted)
+                    if event_tuple not in unique_events:
+                        unique_events.add(event_tuple)
+                        end_urls.append({
+                            'city': city_event['title'],
+                            'name': name,
+                            'start_date': start_date_formatted,
+                            'screen_name_link': screen_name_link
+                        })
+        except Exception as e:
+            print(f"Ошибка при обработке события: {e}")
+    end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
+    grouped_events = group_events_by_weekday(end_urls, city, week)
+    formatted_message = format_message(grouped_events, week)
+    return formatted_message
+
+# Отправка тус в TG с промежуточными сообщениями
+async def send_messages_events(city, week, csv, callback_query):
+    if csv == 1:
+        events = get_events_from_csv(city, week)
+    else:
+        events = get_events_from_city_web(city, week)
+    week_text = ' недели' if week == 1 else ''
+    if (events[0] == ''):
+        await callback_query.message.edit_text(f"Для города {city} нет тус{week_text}, попробуй выбери \"Все тусы\"", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
+    if (len(events) == 1 and events[0] != ''):
+        await callback_query.message.edit_text(f"Это тусы{week_text} города {city} \n {events[0]}", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
+    else:
+        i = 0
+        for message in events:
+            if i == 0:
+                msgFor = await bot.send_message(callback_query.from_user.id, f"{city}\n\n" + message, parse_mode="Markdown",disable_web_page_preview=True)
+            else:
+                await bot.send_message(callback_query.from_user.id, message, parse_mode="Markdown",disable_web_page_preview=True)
+            i = i + 1
+        await msgFor.reply(f"Выше тусы{week_text} города {city}", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
 
 # Команда /start
 @dp.message_handler(commands=['start'])
@@ -293,142 +259,94 @@ async def send_welcome(message: types.Message):
 # Функция для создания клавиатуры
 async def get_keyboard():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    button = types.KeyboardButton("getPost")
+    button = types.KeyboardButton("get_post")
     keyboard.add(button)
-    button = types.KeyboardButton("getAll")
+    button = types.KeyboardButton("get_all")
     keyboard.add(button)
     return keyboard
 
-@dp.message_handler(lambda message: message.text == "getPost")
-@dp.message_handler(commands=['getPost'])
+@dp.message_handler(lambda message: message.text == "get_post")
+@dp.message_handler(commands=['get_post'])
 async def handle_button_click(message: types.Message):
-    # Здесь вы можете вызвать ваш скрипт getPost
-    # Получаем текущую дату
     current_date = datetime.utcnow()
-    print(281)
-    print(current_date)
-    #current_date = datetime.now(timezone.utc)
     current_weekday = current_date.strftime('%A')
-    print(current_weekday)
     current_date_str = current_date.strftime('%d.%m.%Y')
-    print(current_date_str)
-    today_date = current_date.strftime('%d.%m.%Y')  # Получаем дату в формате ДД.ММ.ГГГГ
-    print(today_date)
-
-    # Словарь для хранения событий по дате
     events_by_date = {}
 
-    # Открываем файл events.csv
     with open('events.csv', 'r', encoding='utf-8') as file:
         reader = csv.DictReader(file, delimiter=';')
         
-        # Проходим по строкам файла
         for row in reader:
-            # Проверяем, совпадает ли дата события с текущей
             if row['start_date'] == current_date_str and row['city'] not in ['Москва', 'Санкт-Петербург', 'Екатеринбург']:
                 city = row['city']
                 screen_name_link = row['screen_name_link']
                 name = row['name']
-                
-                # Формируем запись события
                 event_entry = f"[{screen_name_link}|{name}]"
-                
-                # Добавляем событие в словарь
                 if current_date_str not in events_by_date:
                     events_by_date[current_date_str] = {}
                 if city not in events_by_date[current_date_str]:
                     events_by_date[current_date_str][city] = []
                 events_by_date[current_date_str][city].append(event_entry)
 
-    # Выводим результаты
     for date, cities in events_by_date.items():
-        weekday_russian = {
-            'Monday': 'Понедельник',
-            'Tuesday': 'Вторник',
-            'Wednesday': 'Среда',
-            'Thursday': 'Четверг',
-            'Friday': 'Пятница',
-            'Saturday': 'Суббота',
-            'Sunday': 'Воскресенье'
-        }
-        
-        # Формируем текст для публикации
-        txtUrl = ""
-        for city, names in events_by_date.items():
-            txtUrl += f"{weekday_russian[current_weekday]} {date}\n"
+        txt_url = ""
+        for city in events_by_date.items():
+            txt_url += f"{config.day_of_week_rus[current_weekday]} {date}\n"
         
         for city, events in cities.items():
-            txtUrl += f"\n{city}\n"  # Перенос строки перед названием города
+            txt_url += f"\n{city}\n"  # Перенос строки перед названием города
             for event in events:
-                txtUrl += f"{event}\n"
+                txt_url += f"{event}\n"
         
-        txtUrl += '\n'
-        txtUrl += "#тусынавыхи Остальное goo.gl/Df6FBQ"
-        print(txtUrl)
-        await message.reply(txtUrl)
-    # Кодируем текст для URL
-    encoded_txtUrl = urllib.parse.quote(txtUrl)
-
-    # Задаем параметры для запроса к API ВКонтакте
-    #tomorrow = int((current_date + timedelta(days=1)).timestamp())
-    #tomorrow = current_date + timedelta(days=1)
-    #tomorrow = int(current_date + timedelta(days=1).timestamp() * 1000)
+        txt_url += '\n'
+        txt_url += "#тусынавыхи Остальное goo.gl/Df6FBQ"
+    encoded_txt_url = urllib.parse.quote(txt_url)
     current_date2 = datetime.now()
-
-    # Получаем завтрашнюю дату
     tomorrow = current_date2 + timedelta(days=1)
 
     # Преобразуем завтрашнюю дату в миллисекунды
-    #tomorrow_milliseconds = int(tomorrow.timestamp() * 1000)
     tomorrow_milliseconds = int(tomorrow.timestamp())
-    print(347)
-    print(current_date2)
-    print(349)
-    print(timedelta(days=1))
-    print(tomorrow_milliseconds)
-    url = f'https://api.vk.com/method/wall.post?v=5.107&owner_id=-{config.owner_id}&access_token={config.vk_token}&from_group=1&message={encoded_txtUrl}&publish_date={tomorrow_milliseconds}'
-    print(url)
+    url = f'https://api.vk.com/method/wall.post?v=5.107&owner_id=-{config.owner_id}&access_token={config.vk_token}&from_group=1&message={encoded_txt_url}&publish_date={tomorrow_milliseconds}'
 
-    # Отправляем запрос
     response = requests.get(url)
-    #print(response.json())
-    await message.reply('Пост добавлен')
+    data = response.json()
+    await message.reply(txt_url)
+    if 'error' in data:
+        await message.reply(data['error']['error_msg'],disable_web_page_preview=True)
+    else:
+        await message.reply('Пост добавлен',disable_web_page_preview=True)
 
 
-@dp.message_handler(lambda message: message.text == "getAll")
-@dp.message_handler(commands=['getAll'])
-async def handle_button_click2(message: types.Message):
-    endUrls = []
+@dp.message_handler(lambda message: message.text == "get_all")
+@dp.message_handler(commands=['get_all'])
+async def f_get_all(message: types.Message):
+    end_urls = []
     unique_events = set()
     if get_city_ids(config.cities) == False:
-        await message.reply('Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
+        await message.reply(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
     else:
         await message.reply('Пошла возня')
         city_ids = get_city_ids(config.cities)
         for city_id in city_ids:
             print(f"Обработка города с ID: {city_id}")
-            arrLinkVkAll = get_events(city_id)
-            
-            group_info = get_group_info(arrLinkVkAll)
+            arr_link_vk_all = get_events(city_id)
+            group_info = get_group_info(arr_link_vk_all)
             for event in group_info:
                 try:
                     start_date = event.get('start_date')
-                    finish_date = event.get('finish_date', '')
                     description = event.get('description', '')
                     city = event.get('city', {})
-
-                    if start_date and start_date > int(datetime.now().timestamp()):  # Используем datetime.datetime
-                        start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')  # Используем datetime.datetime
+                    if start_date and start_date > int(datetime.now().timestamp()):
+                        start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
                         screen_name = f'=HYPERLINK("https://vk.com/{event["screen_name"]}";"{event["screen_name"]}")'
                         screen_name_link = event.get('screen_name')
                         name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
                         description = description.replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
-
                         if city.get('title'):
                             event_tuple = (city['title'], name, screen_name, start_date_formatted, description)
                             if event_tuple not in unique_events:
                                 unique_events.add(event_tuple)
-                                endUrls.append({
+                                end_urls.append({
                                     'city': city['title'],
                                     'name': name,
                                     'screen_name': screen_name,
@@ -438,61 +356,40 @@ async def handle_button_click2(message: types.Message):
                                 })
                 except Exception as e:
                     print(f"Ошибка при обработке события: {e}")
-        endUrls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))  # Используем datetime.datetime
+        end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
         with open('events.csv', 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = ['city', 'name', 'screen_name', 'start_date', 'screen_name_link', 'description']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter=';')
             writer.writeheader()
-            for row in endUrls:
+            for row in end_urls:
                 writer.writerow(row)
         await message.reply('Добавлено')
 
 # Обработка нажатий на кнопки
 @dp.callback_query_handler(lambda c: True)
 async def process_callback(callback_query: types.CallbackQuery):
+    print('process_callback')
     data = callback_query.data
     if data.startswith("get_events_week_"):
         city = data.split("_")[3]
-        grouped_events = get_events_from_csv(city, 1)
-        #await callback_query.message.edit_text(f"Проверка города {city}")
-        #await bot.send_message(callback_query.from_user.id, f"Проверка города {city} - тусы {grouped_events}")
-        await callback_query.message.edit_text(f"Это тусы для города {city} за неделю \n {grouped_events[0]}", reply_markup=events_menu(city), parse_mode="Markdown", disable_web_page_preview=True)
+        if city in config.cities:
+            await send_messages_events(city, 1, 1, callback_query)
+        else:
+            await send_messages_events(city, 1, 0, callback_query)
     elif data.startswith("get_events_all_"):
         city = data.split("_")[3]
-        print(346)
         if city in config.cities:
-            print(348)
-            print(city)
-            #await callback_query.message.edit_text(f"Это все тусы для города {city}", reply_markup=main_menu())
-            # тут вставить цикл разделения сообщений с прокидыванием bot и выводом bot.send_message
-            #await bot.send_message(callback_query.from_user.id, "Первое сообщение")
-            #await bot.send_message(callback_query.from_user.id, "Второе сообщение")
-            #grouped_events = get_events_from_csv(city, 1)
-            grouped_events = get_events_from_csv(city, 0)
-            if (grouped_events[0] == ''):
-                await callback_query.message.edit_text(f"Для города {city} нет тус недели, попробуй выбери \"Все тусы\"", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
-            if (len(grouped_events) == 1 and grouped_events[0] != ''):
-                await callback_query.message.edit_text(f"Это все тусы для города {city} \n {grouped_events[0]}", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
-            else:
-                i = 0
-                head = ''
-                for message in grouped_events:
-                    if i == 0:
-                        head = f"{city}\n\n"
-                    else:
-                        head = ''
-                    await bot.send_message(callback_query.from_user.id, head + message, parse_mode="Markdown",disable_web_page_preview=True)
-                    i = i + 1
-                await bot.send_message(callback_query.from_user.id, f"Выше тусы недели для города {city}", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
+            await send_messages_events(city, 0, 1, callback_query)
+        else:
+            await send_messages_events(city, 0, 0, callback_query)
 
 @dp.message_handler(lambda message: True)
 async def get_text(message: types.Message):
     print("get_text")
-    if message.text in cities_csv:  # Проверяем, есть ли город в массиве
-        await message.answer(f"Тусы города {message.text} уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
+    if message.text in cities_csv:  # Проверяем, есть ли город в csv
+        await message.answer(f"Тусы города {message.text} у меня уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
     else:
         city_id = get_city_ids([message.text])
-        print(city_id)
         if city_id == '' or city_id == False:
             await message.answer(f"Не нашли город {message.text}, введите другой", reply_markup=main_menu())
         else:
