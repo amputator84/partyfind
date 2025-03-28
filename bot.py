@@ -18,8 +18,8 @@ bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-config.arr_word = ['1',' ', 'а', 'о', 'е']
-config.cities = ['Барнаул','Томск','Екатеринбург']
+#config.arr_word = ['1',' ', 'а', 'о', 'е']
+#config.cities = ['Барнаул','Томск','Екатеринбург']
 
 # Главное меню
 def main_menu():
@@ -68,7 +68,7 @@ def get_city_ids(cities):
         )
         data = response.json()
         if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
-            city_ids.append(data['response']['items'][0]['id'])
+            city_ids.append(data['response']['items'][0])
         else:
             print(f"Город '{city}' не найден.")
             if 'error' in data:
@@ -209,8 +209,10 @@ def get_events_from_csv(city, week):
 async def get_events_from_city_web(city, week, callback_query):
     end_urls = []
     unique_events = set()
-    city_id = get_city_ids([city])[0] # ищем по одному элементу массива
-    arr_link_vk_all = await get_events(city_id, city, callback_query)
+    city_find = get_city_ids([city])
+    city_id = city_find[0]['id']
+    city_name = city_find[0]['title']
+    arr_link_vk_all = await get_events(city_id, city_name, callback_query)
     group_info = get_group_info(arr_link_vk_all)
     for event in group_info:
         try:
@@ -234,7 +236,7 @@ async def get_events_from_city_web(city, week, callback_query):
         except Exception as e:
             print(f"Ошибка при обработке события: {e}")
     end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
-    grouped_events = group_events_by_weekday(end_urls, city, week)
+    grouped_events = group_events_by_weekday(end_urls, city_name, week)
     formatted_message = format_message(grouped_events, week)
     return formatted_message
 
@@ -334,6 +336,9 @@ async def f_get_all(message: types.Message):
         await message.reply(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
     else:
         city_ids = get_city_ids(config.cities)
+        #city_find = get_city_ids([city])[0] # ищем по одному элементу массива
+        #city_id = city_find['id']
+        #city_name = city_find['title']
         for city_id in city_ids:
             print(f"Обработка города с ID: {city_id}")
             arr_link_vk_all = get_events(city_id, 'Доделаю', message) # TODO
@@ -396,11 +401,12 @@ async def get_text(message: types.Message):
     if message.text in cities_csv:  # Проверяем, есть ли город в csv
         await message.answer(f"Тусы города {message.text} у меня уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
     else:
-        city_id = get_city_ids([message.text])
-        if city_id == '' or city_id == False:
+        city_find = get_city_ids([message.text])
+        if city_find == False:
             await message.answer(f"Не нашли город {message.text}, введите другой", reply_markup=main_menu())
         else:
-            await message.answer(f"Город {message.text} найден. Выберите опцию:", reply_markup=events_menu(message.text))
+            city_name = city_find[0]['title']
+            await message.answer(f"Город {city_name} найден. Выберите опцию:", reply_markup=events_menu(city_name))
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
