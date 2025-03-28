@@ -18,9 +18,12 @@ bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
+config.arr_word = ['1',' ', 'а', 'о', 'е']
+config.cities = ['Барнаул','Томск','Екатеринбург']
+
 # Главное меню
 def main_menu():
-    keyboard = InlineKeyboardMarkup(row_width=4)
+    keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
         InlineKeyboardButton("Помощь", callback_data="help")
     )
@@ -75,9 +78,14 @@ def get_city_ids(cities):
     return city_ids
 
 # поиск тус в цикое по словам из word. Каждая итерация максимум по 999 тус
-def get_events(city_id):
+async def get_events(city_id, city_name, callback_query):
     arr_link_vk_all = []
+    word_len = len(config.arr_word)
+    i = word_len
+    countdown_message = await callback_query.message.edit_text(f"Поиск тус города {city_name}. Осталось {i}", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
     for word in config.arr_word:
+        i = i - 1
+        await countdown_message.edit_text(f"Поиск тус города {city_name}. Осталось {i}", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
         url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
         response = requests.get(url_all)
         data = response.json()
@@ -198,11 +206,11 @@ def get_events_from_csv(city, week):
     return formatted_message
 
 # Возвращаем форматированные тусы из VK
-def get_events_from_city_web(city, week):
+async def get_events_from_city_web(city, week, callback_query):
     end_urls = []
     unique_events = set()
     city_id = get_city_ids([city])[0] # ищем по одному элементу массива
-    arr_link_vk_all = get_events(city_id)
+    arr_link_vk_all = await get_events(city_id, city, callback_query)
     group_info = get_group_info(arr_link_vk_all)
     for event in group_info:
         try:
@@ -235,7 +243,7 @@ async def send_messages_events(city, week, csv, callback_query):
     if csv == 1:
         events = get_events_from_csv(city, week)
     else:
-        events = get_events_from_city_web(city, week)
+        events = await get_events_from_city_web(city, week, callback_query)
     week_text = ' недели' if week == 1 else ''
     if (events[0] == ''):
         await callback_query.message.edit_text(f"Для города {city} нет тус{week_text}, попробуй выбери \"Все тусы\"", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
@@ -325,11 +333,10 @@ async def f_get_all(message: types.Message):
     if get_city_ids(config.cities) == False:
         await message.reply(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
     else:
-        await message.reply('Пошла возня')
         city_ids = get_city_ids(config.cities)
         for city_id in city_ids:
             print(f"Обработка города с ID: {city_id}")
-            arr_link_vk_all = get_events(city_id)
+            arr_link_vk_all = get_events(city_id, 'Доделаю', message) # TODO
             group_info = get_group_info(arr_link_vk_all)
             for event in group_info:
                 try:
