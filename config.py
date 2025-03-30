@@ -24,3 +24,5 @@ day_of_week_rus = {
     'Saturday': 'Суббота',
     'Sunday': 'Воскресенье'
 }
+
+me = 123
