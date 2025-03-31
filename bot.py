@@ -18,8 +18,8 @@ bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-config.arr_word = ['1',' ', 'а',]
-config.cities = ['Барнаул','Томск','Екатеринбург']
+# config.arr_word = ['1',' ', 'а',]
+# config.cities = ['Барнаул','Томск','Екатеринбург']
 
 # me = '123'
 
@@ -72,7 +72,6 @@ def get_city_ids(cities):
         if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
             city_ids.append(data['response']['items'][0])
         else:
-            print(f"Город '{city}' не найден.")
             if 'error' in data:
                 print(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
             return False
@@ -83,7 +82,6 @@ def get_city_ids(cities):
 async def get_events(city_id, city_name, callback_query, callback=1):
     print('get_events')
     arr_link_vk_all = []
-    print(85)
     # проверка, есть ли вообще тусы в городе. Поиск по " "
     url_one = f"https://api.vk.com/method/groups.search/?q= &type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
     response = requests.get(url_one)
@@ -91,22 +89,17 @@ async def get_events(city_id, city_name, callback_query, callback=1):
     if len(data['response']['items']) == 0:
         return [] # если нет тус, возвращаем пустоту, чтоб не искать по всем словам/буквам
     else:
-        word_len = len(config.arr_word)
-        i = word_len
+        i = 100
+        d = 100 / len(config.arr_word)
         if callback == 1:
-            countdown_message = await callback_query.message.edit_text(f"Поиск тус города {city_name}. Осталось {i}", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
+            countdown_message = await callback_query.message.edit_text(f"Поиск тус города {city_name}. Осталось {round(i)}%", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
         for word in config.arr_word:
-            i = i - 1
+            i = i - d
             if callback == 1:
-                await countdown_message.edit_text(f"Поиск тус города {city_name}. Осталось {i}", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
+                await countdown_message.edit_text(f"Поиск тус города {city_name}. Осталось {round(i)}%", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
             else:
-                #await callback_query.reply(f"Поиск тус города {city_name}. Осталось {i}", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
-                print(104)
-                print(callback_query)
-                print(callback_query.from_user.id)
-                print(callback_query.message_id)
                 await bot.edit_message_text(
-                            text=f"Поиск тус города {city_name}. Осталось {i}",
+                            text=f"Поиск тус города {city_name}. Осталось {round(i)}%",
                             chat_id=callback_query.chat.id,
                             message_id=callback_query.message_id,
                             parse_mode="Markdown"
@@ -123,9 +116,6 @@ async def get_events(city_id, city_name, callback_query, callback=1):
 # поиск информации о группе по массиву id. Максимум в одной итерации 500 id
 async def get_group_info(group_ids):
     print('get_group_info')
-    print(114)
-    print(group_ids)
-    print(116)
     group_info = []
     for i in range(0, len(group_ids), 500):
         groupIds = ','.join(group_ids[i:i + 500])
@@ -149,7 +139,6 @@ def read_csv(file_path):
 # Возвращает тусы, сгруппированные по дням недели
 def group_events_by_weekday(events, city, week):
     print('group_events_by_weekday')
-    print(city)
     filtered_events = [event for event in events if event['city'].lower() == city.lower()]
     for event in filtered_events:
         event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
@@ -242,8 +231,6 @@ async def get_events_from_city_web(city, week, callback_query):
     city_id = city_find[0]['id']
     city_name = city_find[0]['title']
     arr_link_vk_all = await get_events(city_id, city_name, callback_query)
-    print(216)
-    print(len(arr_link_vk_all))
     if len(arr_link_vk_all) > 0:
         group_info = await get_group_info(arr_link_vk_all)
         for event in group_info:
@@ -281,8 +268,6 @@ async def send_messages_events(city, week, csv, callback_query):
     else:
         events = await get_events_from_city_web(city, week, callback_query)
     week_text = ' недели' if week == 1 else ''
-    print(263)
-    print(events)
     if (events == False):
         await callback_query.message.edit_text(f"Для города {city} нет тус, попробуй другой город", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
     elif (len(events) == 1 and events[0] != ''):
@@ -306,8 +291,6 @@ async def send_welcome(message: types.Message):
 @dp.message_handler(commands=['get_post'])
 async def handle_button_click(message: types.Message):
     print('handle_button_click')
-    print(config.me)
-    print(message.from_user.id)
     if message.from_user.id == config.me:
         current_date = datetime.utcnow()
         current_weekday = current_date.strftime('%A')
@@ -369,22 +352,10 @@ async def f_get_all(message: types.Message):
             await message.reply(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
         else:
             city_ids = get_city_ids(config.cities)
-            print(353)
-            print(city_ids)
-            #city_find = get_city_ids([city])[0] # ищем по одному элементу массива
-            #city_id = city_find['id']
-            #city_name = city_find['title']
             countdown_message = await bot.send_message(message.from_user.id, "Поиск тус", parse_mode="Markdown",disable_web_page_preview=True)
             for city in city_ids:
-                print(f"Обработка города {city['title']}")
                 arr_link_vk_all = await get_events(city['id'], city['title'], countdown_message, 0)
-                print(361)
-                print(arr_link_vk_all)
-                print(363)
                 group_info = await get_group_info(arr_link_vk_all)
-                print(365)
-                print(group_info)
-                print(367)
                 for event in group_info:
                     try:
                         start_date = event.get('start_date')
