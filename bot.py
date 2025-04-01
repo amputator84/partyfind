@@ -397,13 +397,13 @@ async def process_callback(callback_query: types.CallbackQuery):
     data = callback_query.data
     if data.startswith("get_events_week_"):
         city = data.split("_")[3]
-        if city in config.cities:
+        if city in cities_csv:
             await send_messages_events(city, 1, 1, callback_query)
         else:
             await send_messages_events(city, 1, 0, callback_query)
     elif data.startswith("get_events_all_"):
         city = data.split("_")[3]
-        if city in config.cities:
+        if city in cities_csv:
             await send_messages_events(city, 0, 1, callback_query)
         else:
             await send_messages_events(city, 0, 0, callback_query)
