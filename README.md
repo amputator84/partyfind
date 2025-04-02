@@ -1,8 +1,10 @@
-Тусынавыхи
+**Тусынавыхи**
 
 **Telegram бот поиска тус России в ВК**
 
-
+<div align="center">
+  <img src="https://raw.githubusercontent.com/amputator84/partyfind/refs/heads/master/pic/example.gif"/>
+</div>
 
 Данные выводятся в формате:
 Город / День / Дата / Ссылка на ВК
