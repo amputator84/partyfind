@@ -18,6 +18,10 @@ bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
+# config.arr_word = ['1',' ', 'а',]
+# config.cities = ['Барнаул','Сахалин','Томск']
+# me = '123'
+
 user_processing = {} # Один пользователь - один процесс
 
 # Меню событий для города
@@ -76,7 +80,7 @@ async def get_events(city_id, city_name, callback_query, callback=1):
     print('get_events')
     arr_link_vk_all = []
     # проверка, есть ли вообще тусы в городе. Поиск по " "
-    url_one = f"https://api.vk.com/method/groups.search/?q= &type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
+    url_one = f"https://api.vk.com/method/groups.search/?q= &type=event&city_id={city_id}&future=1&offset=0&count=1&access_token={config.vk_token_all}&v={config.vk_api}"
     response = requests.get(url_one)
     data = response.json()
     if len(data['response']['items']) == 0:
@@ -328,7 +332,7 @@ async def handle_button_click(message: types.Message):
             reader = csv.DictReader(file, delimiter=';')
             
             for row in reader:
-                if row['start_date'] == current_date_str and row['city'] not in ['Москва', 'Санкт-Петербург', 'Екатеринбург']:
+                if row['start_date'] == current_date_str and row['city'] not in config.big_cities:
                     city = row['city']
                     screen_name_link = row['screen_name_link']
                     name = row['name']
