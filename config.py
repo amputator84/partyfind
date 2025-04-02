@@ -2,7 +2,7 @@
 api_token = '123'
 # токен для поста
 vk_token = '123'
-# токен для сбора тус по городам из https://oauth.vk.com/blank.html...
+# токен для сбора тус по городам из https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token&scope=offline
 vk_token_all = '123'
 # Версия VK API
 vk_api = '5.131'

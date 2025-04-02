@@ -18,18 +18,7 @@ bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# config.arr_word = ['1',' ', 'а',]
-# config.cities = ['Барнаул','Томск','Екатеринбург']
-
-# me = '123'
-
-# Главное меню
-def main_menu():
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        InlineKeyboardButton("Помощь", callback_data="help")
-    )
-    return keyboard
+user_processing = {} # Один пользователь - один процесс
 
 # Меню событий для города
 def events_menu(city):
@@ -73,8 +62,12 @@ def get_city_ids(cities):
             city_ids.append(data['response']['items'][0])
         else:
             if 'error' in data:
-                print(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
-            return False
+                print(data)
+                return 'error'
+            elif (len(data['response']['items']) == 0):
+                return 'empty'
+            else:
+                return 'error'
         time.sleep(0.5) # чтоб не DDOS`ить`
     return city_ids
 
@@ -263,10 +256,16 @@ async def get_events_from_city_web(city, week, callback_query):
 
 # Отправка тус в TG с промежуточными сообщениями
 async def send_messages_events(city, week, csv, callback_query):
+    user_id = callback_query.from_user.id
     if csv == 1:
         events = get_events_from_csv(city, week)
     else:
+        if user_processing.get(user_id, False):
+            await callback_query.message.edit_text(f"Ща ща", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
+            return
+        user_processing[user_id] = True
         events = await get_events_from_city_web(city, week, callback_query)
+        user_processing[user_id] = False
     week_text = ' недели' if week == 1 else ''
     if (events == False):
         await callback_query.message.edit_text(f"Для города {city} нет тус, попробуй другой город", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
@@ -282,10 +281,38 @@ async def send_messages_events(city, week, csv, callback_query):
             i = i + 1
         await msgFor.reply(f"Выше тусы{week_text} города {city}", reply_markup=events_menu(city), parse_mode="Markdown",disable_web_page_preview=True)
 
+# Функция для записи статистики в CSV файл
+def log_user_to_csv(user_id, username, first_name, is_bot):
+    file_exists = False
+    # Проверяем, существует ли файл и есть ли в нем данные
+    try:
+        with open('stat.csv', mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            file_exists = True
+            for row in reader:
+                if row[0] == str(user_id):  # Проверяем, есть ли пользователь в файле
+                    return  # Если есть, выходим из функции
+    except FileNotFoundError:
+        print('Файл stat.csv не существует')
+        pass  # Файл не существует, создадим его позже
+
+    # Если файл не существует или пользователь не найден, добавляем запись
+    with open('stat.csv', mode='a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(['User ID', 'Username', 'First Name', 'Is Bot'])  # Записываем заголовки
+        writer.writerow([user_id, username, first_name, is_bot])  # Записываем данные пользователя
+
 # Команда /start
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
-    await message.reply("Привет! Введи город на русском, поищем в нём тусы", reply_markup=main_menu())
+    user_id = message.from_user.id
+    username = message.from_user.username or "No Username"  # Если у пользователя нет имени пользователя
+    first_name = message.from_user.first_name or "No First Name"  # Имя пользователя
+    is_bot = message.from_user.is_bot  # Является ли пользователь ботом
+    # Логируем пользователя в CSV
+    log_user_to_csv(user_id, username, first_name, is_bot)
+    msgFor = await message.answer("Привет! Введи город на русском, поищем в нём тусы", reply_markup=types.ReplyKeyboardRemove())
 
 @dp.message_handler(lambda message: message.text == "get_post")
 @dp.message_handler(commands=['get_post'])
@@ -348,14 +375,16 @@ async def f_get_all(message: types.Message):
     if message.from_user.id == config.me:
         end_urls = []
         unique_events = set()
-        if get_city_ids(config.cities) == False:
-            await message.reply(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token')
+        if get_city_ids(config.cities) == 'error':
+            await message.reply(f'Обнови https://oauth.vk.com/authorize?client_id={config.client_id}&scope=groups&redirect_uri=http%3A%2F%2Foauth.vk.com%2Fblank.html&display=page&response_type=token&scope=offline')
         else:
             city_ids = get_city_ids(config.cities)
             countdown_message = await bot.send_message(message.from_user.id, "Поиск тус", parse_mode="Markdown",disable_web_page_preview=True)
             for city in city_ids:
                 arr_link_vk_all = await get_events(city['id'], city['title'], countdown_message, 0)
                 group_info = await get_group_info(arr_link_vk_all)
+                if group_info == []: # пропускаем если нет тус
+                    continue
                 for event in group_info:
                     try:
                         start_date = event.get('start_date')
@@ -415,8 +444,10 @@ async def get_text(message: types.Message):
         await message.answer(f"Тусы города {message.text} у меня уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
     else:
         city_find = get_city_ids([message.text])
-        if city_find == False:
-            await message.answer(f"Не нашли город {message.text}, введите другой", reply_markup=main_menu())
+        if city_find == 'empty':
+            await message.answer(f"Не нашли город {message.text}, введите другой")
+        elif city_find == 'error':
+            await message.answer(f"Какая-то ошибка, напиши админу @Drummer84")
         else:
             city_name = city_find[0]['title']
             await message.answer(f"Город {city_name} найден. Выберите опцию:", reply_markup=events_menu(city_name))
