@@ -354,7 +354,7 @@ async def handle_button_click(message: types.Message):
                     txt_url += f"{event}\n"
             
             txt_url += '\n'
-            txt_url += "#тусынавыхи Остальное goo.gl/Df6FBQ"
+            txt_url += "#тусынавыхи Остальное clck.ru/3KMog8"
         encoded_txt_url = urllib.parse.quote(txt_url)
         current_date2 = datetime.now()
         tomorrow = current_date2 + timedelta(days=1)
