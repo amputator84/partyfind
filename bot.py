@@ -335,7 +335,7 @@ async def handle_button_click(message: types.Message):
                 if row['start_date'] == current_date_str and row['city'] not in config.big_cities:
                     city = row['city']
                     screen_name_link = row['screen_name_link']
-                    name = row['name']
+                    name = re.sub(r'[^a-zA-Zа-яА-Я0-9.,;:!?ёЁ\- ]+', '', row['name'])
                     event_entry = f"[{screen_name_link}|{name}]"
                     if current_date_str not in events_by_date:
                         events_by_date[current_date_str] = {}
@@ -355,21 +355,25 @@ async def handle_button_click(message: types.Message):
             
             txt_url += '\n'
             txt_url += "#тусынавыхи Остальное clck.ru/3KMog8"
-        encoded_txt_url = urllib.parse.quote(txt_url)
+        encoded_txt_url = txt_url
         current_date2 = datetime.now()
         tomorrow = current_date2 + timedelta(days=1)
 
         # Преобразуем завтрашнюю дату в миллисекунды
         tomorrow_milliseconds = int(tomorrow.timestamp())
         url = f'https://api.vk.com/method/wall.post?v=5.107&owner_id=-{config.owner_id}&access_token={config.vk_token}&from_group=1&message={encoded_txt_url}&publish_date={tomorrow_milliseconds}'
-
         response = requests.get(url)
-        data = response.json()
-        await message.reply(txt_url)
-        if 'error' in data:
-            await message.reply(data['error']['error_msg'],disable_web_page_preview=True)
-        else:
-            await message.reply('Пост добавлен',disable_web_page_preview=True)
+        data = []
+        try:
+            await message.reply(encoded_txt_url)
+            data = response.json()
+            if 'error' in data:
+                await message.reply(data['error']['error_msg'],disable_web_page_preview=True)
+            else:
+                await message.reply('Пост добавлен',disable_web_page_preview=True)
+        except Exception as e:
+            print(f"Ошибка при обработке события: {e}")
+            await message.reply(f"Ошибка при обработке события: {e}")
 
 
 @dp.message_handler(lambda message: message.text == "get_all")
@@ -444,6 +448,7 @@ async def process_callback(callback_query: types.CallbackQuery):
 @dp.message_handler(lambda message: True)
 async def get_text(message: types.Message):
     print("get_text")
+    print(message.text)
     if message.text in cities_csv:  # Проверяем, есть ли город в csv
         await message.answer(f"Тусы города {message.text} у меня уже есть. Выберите опцию:", reply_markup=events_menu(message.text))
     else:
