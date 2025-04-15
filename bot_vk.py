@@ -13,12 +13,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Configuration
 class Config:
-    vk_bot_token = '123'
-    vk_bot_token2 = '234'
+    #vk_bot_token = '123'
+    #vk_bot_token2 = '234'
     vk_api = '5.131'
-    city_id = 99
-    vk_bot_token = '123'
-    vk_bot_token2 = '123'
+    #city_id = 99
     day_of_week_rus = {
         'Monday': 'Понедельник',
         'Tuesday': 'Вторник',
@@ -28,6 +26,7 @@ class Config:
         'Saturday': 'Суббота',
         'Sunday': 'Воскресенье'
     }
+    arr_word = ['1', ' ', 'а']
 
 config = Config()
 
@@ -77,70 +76,12 @@ def group_events_by_weekday(events, city, week):
 
     return grouped_events
 
-def format_message2(grouped_events, week):
-    message_parts = []
-
-    if week == 1:
-        for weekday, events in grouped_events.items():
-            message_parts.append(f"{config.day_of_week_rus[weekday]} {events[0]['start_date'].strftime('%d.%m.%Y')}")
-            for event in events:
-                message_parts.append(f"[{event['screen_name_link']}|{event['name']}]")
-            message_parts.append("")
-    else:
-        # Получаем минимальную и максимальную даты из событий
-        all_dates = []
-        for events in grouped_events.values():
-            for event in events:
-                all_dates.append(event['start_date'])
-        
-        min_date = min(all_dates)
-        max_date = max(all_dates)
-        current_date = min_date
-        
-        while current_date <= max_date:
-            # Проверяем, есть ли события на текущую дату
-            events_today = []
-            for events in grouped_events.values():
-                for event in events:
-                    if event['start_date'].date() == current_date.date():
-                        events_today.append(event)
-            
-            # Если есть события на текущую дату, добавляем их в сообщение
-            if events_today:
-                weekday = current_date.strftime('%A')
-                message_parts.append(f"{config.day_of_week_rus[weekday]} {current_date.strftime('%d.%m.%Y')}")
-                for event in events_today:
-                    message_parts.append(f"[{event['screen_name_link']}|{event['name']}]")
-                message_parts.append("")
-            current_date += timedelta(days=1)
-    
-    formatted_message = "\n".join(message_parts).strip()
-    logging.info(132)
-    logging.info(len(formatted_message))
-    messages = []
-    
-    # Ограничение одного сообщения telegram и VK
-    if len(formatted_message) > 4096:
-        message_parts = formatted_message.split('\n')
-        current_part = ""
-        for line in message_parts:
-            if len(current_part) + len(line) + 1 <= 4096:
-                current_part += line + '\n'
-            else:
-                messages.append(current_part.strip())
-                current_part = line + '\n'
-        if current_part:
-            messages.append(current_part.strip())
-    else:
-        messages.append(formatted_message)
-    logging.info(150)
-    logging.info(len(messages))
-    return messages
-
 def format_message(grouped_events, week):
     message_parts = []
 
     if week == 1:
+        logging.info(90)
+        logging.info(grouped_events)
         for weekday, events in grouped_events.items():
             message_parts.append(f"{config.day_of_week_rus[weekday]} {events[0]['start_date'].strftime('%d.%m.%Y')}")
             for event in events:
@@ -175,7 +116,7 @@ def format_message(grouped_events, week):
             current_date += timedelta(days=1)
     
     formatted_message = "\n".join(message_parts).strip()
-    logging.info(132)
+    logging.info(126)
     logging.info(len(formatted_message))
     messages = []
     
@@ -185,18 +126,22 @@ def format_message(grouped_events, week):
         current_part = ""
         for line in message_parts:
             if len(current_part) + len(line) + 1 <= 4096:
+                logging.info(136)
                 current_part += line + '\n'
             else:
+                logging.info(139)
                 messages.append(current_part.strip())
                 current_part = line + '\n'
         
         # Добавляем последнюю часть сообщения
         if current_part:
+            logging.info(145)
             messages.append(current_part.strip())
     else:
+        logging.info(148)
         messages.append(formatted_message)
     
-    logging.info(150)
+    logging.info(151)
     logging.info(len(messages))
     return messages
 
@@ -221,10 +166,12 @@ def get_city_ids(cities):
         time.sleep(0.5)  # To avoid hitting the rate limit
     return city_ids
 
-def get_events(city_id):
+def get_events2(city_id):
     logging.info('get_events')
     arr_link_vk_all = []
     url_all = f"https://api.vk.com/method/groups.search/?q=Туса&type=event&city_id={city_id}&future=1&offset=0&count=10&access_token={config.vk_bot_token2}&v={config.vk_api}"
+    logging.info(180)
+    logging.info(url_all)
     response = requests.get(url_all)
     data = response.json()
     
@@ -234,7 +181,100 @@ def get_events(city_id):
     time.sleep(0.5)
     return arr_link_vk_all
 
-async def get_group_info(group_ids):
+def get_events(city_id, city_name, event_ses, vk_ses):
+    logging.info('get_events')
+    arr_link_vk_all = []
+    # проверка, есть ли вообще тусы в городе. Поиск по " "
+    url_one = f"https://api.vk.com/method/groups.search/?q= &type=event&city_id={city_id}&future=1&offset=0&count=1&access_token={config.vk_bot_token2}&v={config.vk_api}"
+    response = requests.get(url_one)
+    data = response.json()
+    if len(data['response']['items']) == 0:
+        return [] # если нет тус, возвращаем пустоту, чтоб не искать по всем словам/буквам
+    else:
+        i = 100
+        j = 1
+        d = 100 / len(config.arr_word)
+        response = vk_ses.method('messages.send', {
+            'user_id': event_ses.user_id,
+            'message': 'Идёт поиск тус',
+            'random_id': 0
+        })
+        for word in config.arr_word:
+            i = i - d
+            #if callback == 1:
+            #    await countdown_message.edit_text(f"Поиск тус города {city_name}. Осталось {round(i)}%", reply_markup=events_menu(city_name), parse_mode="Markdown",disable_web_page_preview=True)
+            #else:
+            #    await bot.edit_message_text(
+            #                text=f"Поиск тус города {city_name}. Осталось {round(i)}%",
+            #                chat_id=callback_query.chat.id,
+            #                message_id=callback_query.message_id,
+            #                parse_mode="Markdown"
+            #            )
+            # f"Поиск тус города {city_name}. Осталось {round(i)}%"
+            logging.info(f'Идёт поиск тус {word}')
+            if j == 1:
+                response3 = response
+            else:
+                response3 = response2
+            response2 = vk_ses.method('messages.edit', {
+                              'peer_id': event_ses.user_id,
+                              'message_id': response3,
+                              'message': f"Поиск тус города {city_name}. Осталось {round(i)}%"
+                          })
+            j = 1
+            print('response2')
+            print(response2)
+            url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_bot_token2}&v={config.vk_api}"
+            response = requests.get(url_all)
+            data = response.json()
+            if 'response' in data and 'items' in data['response']:
+                for event in data['response']['items']:
+                    arr_link_vk_all.append(event['screen_name'])
+            time.sleep(0.5)
+        return arr_link_vk_all
+
+def get_events_from_city_web(city, week, event_ses, vk_ses):
+    logging.info('get_events_from_city_web')
+    end_urls = []
+    unique_events = set()
+    city_find = get_city_ids([city])
+    logging.info(city_find)
+    city_id = city_find[0]['id']
+    logging.info(city_id)
+    city_name = city_find[0]['title']
+    logging.info(city_name)
+    arr_link_vk_all = get_events(city_id, city_name, event_ses, vk_ses)
+    if len(arr_link_vk_all) > 0:
+        group_info = get_group_info(arr_link_vk_all)
+        for event in group_info:
+            try:
+                start_date = event.get('start_date')
+                city_event = event.get('city', {})
+                if start_date and start_date > int(datetime.now().timestamp()):
+                    start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
+                    screen_name_link = event.get('screen_name')
+                    name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
+
+                    if city_event.get('title'):
+                        event_tuple = (city_event['title'], name, start_date_formatted)
+                        if event_tuple not in unique_events:
+                            unique_events.add(event_tuple)
+                            end_urls.append({
+                                'city': city_event['title'],
+                                'name': name,
+                                'start_date': start_date_formatted,
+                                'screen_name_link': screen_name_link
+                            })
+            except Exception as e:
+                print(f"Ошибка при обработке события: {e}")
+        end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
+        grouped_events = group_events_by_weekday(end_urls, city_name, week)
+        formatted_message = format_message(grouped_events, week)
+        return formatted_message
+    else:
+        return False
+
+def get_group_info(group_ids):
     logging.info('get_group_info')
     group_info = []
     for i in range(0, len(group_ids), 500):
@@ -265,20 +305,21 @@ async def main():
             else:
                 logging.info('main not start')
                 logging.info(message_text)
+                city = message_text
                 if message_text in cities_csv:
-                    city = message_text
+                    logging.info(263)
                     logging.info(city)
                     events = read_csv('events.csv')
                     grouped_events = group_events_by_weekday(events, city, 1)
                     formatted_message = format_message(grouped_events, 1)
                     logging.info(len(events))
-                    logging.info(222)
+                    logging.info(269)
                     logging.info(len(formatted_message))
 
                     i = 0
                     for message in formatted_message:
                         if i == 0:
-                            logging.info(309)
+                            logging.info(275)
                             logging.info(message)
                             vk_session.method('messages.send', {
                                 'user_id': user_id,
@@ -299,6 +340,16 @@ async def main():
                         'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
                         'random_id': 0,
                         'disable_web_page_preview': 1
+                    })
+                else:
+                    logging.info(298)
+                    logging.info(city)
+                    events = get_events_from_city_web(city, 1, event, vk_session)
+                    logging.info(events)
+                    vk_session.method('messages.send', {
+                        'user_id': user_id,
+                        'message': events,
+                        'random_id': 0
                     })
 
 if __name__ == '__main__':
