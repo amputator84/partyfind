@@ -8,21 +8,13 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import csv
 from datetime import datetime, timedelta
-import urllib.parse
 import requests
 import time
-
 logging.basicConfig(level=logging.INFO)
-
 bot = Bot(token=config.api_token)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
-
-# config.arr_word = ['1',' ', 'а',]
-# config.cities = ['Барнаул','Сахалин','Томск']
-# me = '123'
-
-user_processing = {} # Один пользователь - один процесс
+user_processing = {}
 
 # Меню событий для города
 def events_menu(city):
@@ -352,10 +344,9 @@ async def handle_button_click(message: types.Message):
                 txt_url += f"\n{city}\n"  # Перенос строки перед названием города
                 for event in events:
                     txt_url += f"{event}\n"
-            
-            txt_url += '\n'
-            txt_url += "#тусынавыхи Остальное clck.ru/3KMog8"
-        encoded_txt_url = txt_url
+
+        encoded_txt_url_tg = txt_url + f"\n\n#тусынавыхи Остальное clck.ru/3KMog8"
+        encoded_txt_url = txt_url + f"\n\n%23тусынавыхи Остальное clck.ru/3KMog8" # %23 - хэштег
         current_date2 = datetime.now()
         tomorrow = current_date2 + timedelta(days=1)
 
@@ -365,7 +356,7 @@ async def handle_button_click(message: types.Message):
         response = requests.get(url)
         data = []
         try:
-            await message.reply(encoded_txt_url)
+            await message.reply(encoded_txt_url_tg)
             data = response.json()
             if 'error' in data:
                 await message.reply(data['error']['error_msg'],disable_web_page_preview=True)
