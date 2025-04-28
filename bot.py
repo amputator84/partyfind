@@ -10,6 +10,7 @@ import csv
 from datetime import datetime, timedelta
 import requests
 import time
+import re
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=config.api_token)
 storage = MemoryStorage()
@@ -133,8 +134,7 @@ def group_events_by_weekday(events, city, week):
         event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
 
     if week == 1:
-        today = datetime.utcnow()
-        start_of_week = today - timedelta(days=today.weekday())
+        start_of_week = datetime.utcnow().replace(hour=00, minute=00, second=00, microsecond=0)
         end_of_week = start_of_week + timedelta(days=6)  # Конец недели
         filtered_events = [event for event in filtered_events if start_of_week <= event['start_date'] <= end_of_week]
 
