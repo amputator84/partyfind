@@ -29,3 +29,5 @@ day_of_week_rus = {
 
 # ID пользователя. Можно подглядеть в @getmyid_bot
 me = 123
+# get_post - первый город в списке
+first_city = 'Новосибирск'

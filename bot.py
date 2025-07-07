@@ -340,10 +340,19 @@ async def handle_button_click(message: types.Message):
             for city in events_by_date.items():
                 txt_url += f"{config.day_of_week_rus[current_weekday]} {date}\n"
             
-            for city, events in cities.items():
-                txt_url += f"\n{city}\n"  # Перенос строки перед названием города
-                for event in events:
-                    txt_url += f"{event}\n"
+            # Выводим первым город из config.first_city
+            if config.first_city != '':
+                sorted_cities = sorted(cities.keys(), key=lambda x: (x != config.first_city, x))
+                for city in sorted_cities:
+                    events = cities[city]
+                    txt_url += f"\n{city}\n"  # Перенос строки перед названием города
+                    for event in events:
+                        txt_url += f"{event}\n"
+            else:
+                for city, events in cities.items():
+                    txt_url += f"\n{city}\n"
+                    for event in events:
+                        txt_url += f"{event}\n"
 
         encoded_txt_url_tg = txt_url + f"\n\n#тусынавыхи Остальное clck.ru/3KMog8"
         encoded_txt_url = txt_url + f"\n\n%23тусынавыхи Остальное clck.ru/3KMog8" # %23 - хэштег
