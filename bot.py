@@ -319,6 +319,7 @@ async def handle_button_click(message: types.Message):
         current_weekday = current_date.strftime('%A')
         current_date_str = current_date.strftime('%d.%m.%Y')
         events_by_date = {}
+        txt_url = ""
 
         with open('events.csv', 'r', encoding='utf-8') as file:
             reader = csv.DictReader(file, delimiter=';')
@@ -354,7 +355,11 @@ async def handle_button_click(message: types.Message):
                     for event in events:
                         txt_url += f"{event}\n"
 
-        encoded_txt_url_tg = txt_url + f"\n\n#тусынавыхи Остальное clck.ru/3KMog8"
+        if txt_url == '':
+            await message.reply('На сегодня тус нет')
+            return False
+        else:
+            encoded_txt_url_tg = txt_url + f"\n\n#тусынавыхи Остальное clck.ru/3KMog8"
         encoded_txt_url = txt_url + f"\n\n%23тусынавыхи Остальное clck.ru/3KMog8" # %23 - хэштег
         current_date2 = datetime.now()
         tomorrow = current_date2 + timedelta(days=1)
