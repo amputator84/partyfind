@@ -37,6 +37,7 @@ def read_csv(file_path):
 
 def group_events_by_weekday(events, city, week):
     logging.info('group_events_by_weekday')
+    logging.info(city)
     filtered_events = [event for event in events if event['city'].lower() == city.lower()]
     for event in filtered_events:
         event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
@@ -161,10 +162,10 @@ def get_events(city_id, city_name, event_ses, vk_ses):
     else:
         vk_ses.method('messages.send', {
             'user_id': event_ses.user_id,
-            'message': f"Идёт поиск тус {city_name}",
+            'message': f"Идёт поиск тус города {city_name}",
             'random_id': 0
         })
-        for word in config.arr_word:
+        for word in ['1', ' ', 'а']:#config.arr_word:
             url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
             response = requests.get(url_all)
             data = response.json()
@@ -205,9 +206,24 @@ def get_events_from_city_web(city, week, event_ses, vk_ses):
                             })
             except Exception as e:
                 print(f"Ошибка при обработке события: {e}")
+        logging.info('209')
+        logging.info(len(end_urls))
         end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
+        logging.info(212)
+        logging.info(len(end_urls))
         grouped_events = group_events_by_weekday(end_urls, city_name, week)
+        logging.info(215)
+        logging.info(len(grouped_events))
+        logging.info(217)
+        #logging.info(grouped_events[0])
+        ii = 0
+        for m in grouped_events:
+            if ii == 0:
+                logging.info(222)
+                logging.info(m)
         formatted_message = format_message(grouped_events, week)
+        logging.info(218)
+        logging.info(len(formatted_message))
         return formatted_message
     else:
         return False
@@ -272,11 +288,31 @@ async def main():
                     })
                 else:
                     events = get_events_from_city_web(city, 1, event, vk_session)
+                    logging.info(284)
+                    logging.info(len(events))
+                    #city_find = get_city_ids([message_text])
+                    i = 0
+                    for message in events:
+                        if i == 0:
+                            vk_session.method('messages.send', {
+                                'user_id': user_id,
+                                'message': f"{city}\n\n" + message,
+                                'random_id': 0,
+                                'disable_web_page_preview': 1
+                            })
+                        else:
+                            vk_session.method('messages.send', {
+                                'user_id': user_id,
+                                'message': message,
+                                'random_id': 0,
+                                'disable_web_page_preview': 1
+                            })
+                        i = i + 1
                     vk_session.method('messages.send', {
                         'user_id': user_id,
-                        'message': events,
-                        'random_id': 0
+                        'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
+                        'random_id': 0,
+                        'disable_web_page_preview': 1
                     })
-
 if __name__ == '__main__':
     asyncio.run(main())
