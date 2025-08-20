@@ -134,6 +134,14 @@ def get_city_ids(cities):
         data = response.json()
         if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
             city_ids.append(data['response']['items'][0])
+        else:
+            if 'error' in data:
+                print(data)
+                return 'error'
+            elif (len(data['response']['items']) == 0):
+                return 'empty'
+            else:
+                return 'error'
         time.sleep(0.5)  # To avoid hitting the rate limit
     return city_ids
 
@@ -258,61 +266,85 @@ async def main():
                 })
             else:
                 logging.info(message_text)
-                city = message_text
-                if message_text in cities_csv:
-                    events = read_csv('events.csv')
-                    grouped_events = group_events_by_weekday(events, city, 1)
-                    formatted_message = format_message(grouped_events, 1)
-                    i = 0
-                    for message in formatted_message:
-                        if i == 0:
-                            vk_session.method('messages.send', {
-                                'user_id': user_id,
-                                'message': f"{city}\n\n" + message,
-                                'random_id': 0,
-                                'disable_web_page_preview': 1
-                            })
-                        else:
-                            vk_session.method('messages.send', {
-                                'user_id': user_id,
-                                'message': message,
-                                'random_id': 0,
-                                'disable_web_page_preview': 1
-                            })
-                        i = i + 1
+                city_find = get_city_ids([message_text])
+                if city_find == 'empty':
                     vk_session.method('messages.send', {
                         'user_id': user_id,
-                        'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
+                        'message': f"Не нашли город {message_text}, введите другой",
+                        'random_id': 0,
+                        'disable_web_page_preview': 1
+                    })
+                elif city_find == 'error':
+                    vk_session.method('messages.send', {
+                        'user_id': user_id,
+                        'message': f"Какая-то ошибка, напиши админу",
                         'random_id': 0,
                         'disable_web_page_preview': 1
                     })
                 else:
-                    events = get_events_from_city_web(city, 1, event, vk_session)
-                    logging.info(284)
-                    logging.info(len(events))
-                    #city_find = get_city_ids([message_text])
-                    i = 0
-                    for message in events:
-                        if i == 0:
+                    city = city_find[0]['title']
+                    if city in cities_csv:
+                        events = read_csv('events.csv')
+                        grouped_events = group_events_by_weekday(events, city, 1)
+                        formatted_message = format_message(grouped_events, 1)
+                        i = 0
+                        for message in formatted_message:
+                            if i == 0:
+                                vk_session.method('messages.send', {
+                                    'user_id': user_id,
+                                    'message': f"{city}\n\n" + message,
+                                    'random_id': 0,
+                                    'disable_web_page_preview': 1
+                                })
+                            else:
+                                vk_session.method('messages.send', {
+                                    'user_id': user_id,
+                                    'message': message,
+                                    'random_id': 0,
+                                    'disable_web_page_preview': 1
+                                })
+                            i = i + 1
+                        vk_session.method('messages.send', {
+                            'user_id': user_id,
+                            'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
+                            'random_id': 0,
+                            'disable_web_page_preview': 1
+                        })
+                    else:
+                        events = get_events_from_city_web(city, 1, event, vk_session)
+                        logging.info(284)
+                        logging.info(events)
+                        if events == False:
                             vk_session.method('messages.send', {
                                 'user_id': user_id,
-                                'message': f"{city}\n\n" + message,
+                                'message': f"Не нашли город {message_text}, введите другой",
                                 'random_id': 0,
                                 'disable_web_page_preview': 1
                             })
                         else:
+                            logging.info(len(events))
+                            i = 0
+                            for message in events:
+                                if i == 0:
+                                    vk_session.method('messages.send', {
+                                        'user_id': user_id,
+                                        'message': f"{city}\n\n" + message,
+                                        'random_id': 0,
+                                        'disable_web_page_preview': 1
+                                    })
+                                else:
+                                    vk_session.method('messages.send', {
+                                        'user_id': user_id,
+                                        'message': message,
+                                        'random_id': 0,
+                                        'disable_web_page_preview': 1
+                                    })
+                                i = i + 1
                             vk_session.method('messages.send', {
                                 'user_id': user_id,
-                                'message': message,
+                                'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
                                 'random_id': 0,
                                 'disable_web_page_preview': 1
                             })
-                        i = i + 1
-                    vk_session.method('messages.send', {
-                        'user_id': user_id,
-                        'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
-                        'random_id': 0,
-                        'disable_web_page_preview': 1
-                    })
 if __name__ == '__main__':
     asyncio.run(main())
