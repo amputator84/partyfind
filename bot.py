@@ -72,8 +72,8 @@ def get_city_ids(cities):
 async def get_events(city_id, city_name, callback_query, callback=1):
     print('get_events')
     arr_link_vk_all = []
-    # проверка, есть ли вообще тусы в городе. Поиск по " "
-    url_one = f"https://api.vk.com/method/groups.search/?q= &type=event&city_id={city_id}&future=1&offset=0&count=1&access_token={config.vk_token_all}&v={config.vk_api}"
+    # проверка, есть ли вообще тусы в городе. Поиск по "а", пока костыль, пробел перестал работать и %20 тоже
+    url_one = f"https://api.vk.com/method/groups.search/?q=а&type=event&city_id={city_id}&future=1&offset=0&count=1&access_token={config.vk_token_all}&v={config.vk_api}"
     response = requests.get(url_one)
     data = response.json()
     if len(data['response']['items']) == 0:
