@@ -1,43 +1,70 @@
-import vk_api  # 11.9.9
+import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
-import logging
 import requests
 import time
-import asyncio
-import csv
 from datetime import datetime, timedelta
 import config
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def auth():
     vk_session = vk_api.VkApi(token=config.vk_token)
     return vk_session
 
-def extract_unique_cities(file_path):
-    cities = set()
-    with open(file_path, mode='r', encoding='utf-8') as file:
-        reader = csv.DictReader(file, delimiter=';')
-        for row in reader:
-            city = row['city'].strip()
-            if city:
-                cities.add(city)
-    return list(cities)
+def get_city_ids(cities):
+    city_ids = []
+    for city in cities:
+        response = requests.get(
+            'https://api.vk.com/method/database.getCities',
+            params={
+                'access_token': config.vk_token_all,
+                'v': '5.131',
+                'country_id': 1,
+                'q': city,
+                'count': 1
+            }
+        )
+        data = response.json()
+        if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
+            city_ids.append(data['response']['items'][0])
+        else:
+            if 'error' in data:
+                return 'error'
+            elif (len(data['response']['items']) == 0):
+                return 'empty'
+            else:
+                return 'error'
+        time.sleep(0.5)
+    return city_ids
 
-cities_csv = extract_unique_cities('events.csv')
+def get_events(city_id, city_name, event_ses, vk_ses):
+    arr_link_vk_all = []
+    vk_ses.method('messages.send', {
+        'user_id': event_ses.user_id,
+        'message': f"Идёт поиск тус города {city_name}",
+        'random_id': 0
+    })
+    for word in ['1', ' ', 'а']:
+        url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
+        response = requests.get(url_all)
+        data = response.json()
+        if 'response' in data and 'items' in data['response']:
+            for event in data['response']['items']:
+                arr_link_vk_all.append(event['screen_name'])
+        time.sleep(0.5)
+    return arr_link_vk_all
 
-def read_csv(file_path):
-    events = []
-    with open(file_path, mode='r', encoding='utf-8') as file:
-        reader = csv.DictReader(file, delimiter=';')
-        for row in reader:
-            events.append(row)
-    return events
+def get_group_info(group_ids):
+    group_info = []
+    for i in range(0, len(group_ids), 500):
+        groupIds = ','.join(group_ids[i:i + 500])
+        url = f"https://api.vk.com/method/groups.getById/?group_ids={groupIds}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
+        response = requests.get(url)
+        data = response.json()
+        if 'response' in data:
+            group_info.extend(data['response'])
+        time.sleep(1)
+    return group_info
 
 def group_events_by_weekday(events, city, week):
-    logging.info('group_events_by_weekday')
-    logging.info(city)
     filtered_events = [event for event in events if event['city'].lower() == city.lower()]
     for event in filtered_events:
         event['start_date'] = datetime.strptime(event['start_date'], '%d.%m.%Y')
@@ -45,7 +72,7 @@ def group_events_by_weekday(events, city, week):
     if week == 1:
         today = datetime.utcnow()
         start_of_week = today - timedelta(days=today.weekday())
-        end_of_week = start_of_week + timedelta(days=6)  # Конец недели
+        end_of_week = start_of_week + timedelta(days=6)
         filtered_events = [event for event in filtered_events if start_of_week <= event['start_date'] <= end_of_week]
 
     grouped_events = {}
@@ -67,7 +94,6 @@ def format_message(grouped_events, week):
                 message_parts.append(f"[{event['screen_name_link']}|{event['name']}]")
             message_parts.append("")
     else:
-        # Получаем минимальную и максимальную даты из событий
         all_dates = []
         for events in grouped_events.values():
             for event in events:
@@ -78,14 +104,12 @@ def format_message(grouped_events, week):
         current_date = min_date
         
         while current_date <= max_date:
-            # Проверяем, есть ли события на текущую дату
             events_today = []
             for events in grouped_events.values():
                 for event in events:
                     if event['start_date'].date() == current_date.date():
                         events_today.append(event)
             
-            # Если есть события на текущую дату, добавляем их в сообщение
             if events_today:
                 weekday = current_date.strftime('%A')
                 message_parts.append(f"{config.day_of_week_rus[weekday]} {current_date.strftime('%d.%m.%Y')}")
@@ -97,7 +121,6 @@ def format_message(grouped_events, week):
     formatted_message = "\n".join(message_parts).strip()
     messages = []
     
-    # Ограничение одного сообщения telegram и VK
     if len(formatted_message) > 4096:
         message_parts = formatted_message.split('\n')
         current_part = ""
@@ -107,8 +130,6 @@ def format_message(grouped_events, week):
             else:
                 messages.append(current_part.strip())
                 current_part = line + '\n'
-        
-        # Добавляем последнюю часть сообщения
         if current_part:
             messages.append(current_part.strip())
     else:
@@ -116,72 +137,12 @@ def format_message(grouped_events, week):
     
     return messages
 
-
-def get_city_ids(cities):
-    logging.info('get_city_ids')
-    city_ids = []
-    for city in cities:
-        response = requests.get(
-            'https://api.vk.com/method/database.getCities',
-            params={
-                'access_token': config.vk_token_all,
-                'v': '5.131',
-                'country_id': 1,
-                'q': city,
-                'count': 1
-            }
-        )
-        data = response.json()
-        if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
-            city_ids.append(data['response']['items'][0])
-        else:
-            if 'error' in data:
-                print(data)
-                return 'error'
-            elif (len(data['response']['items']) == 0):
-                return 'empty'
-            else:
-                return 'error'
-        time.sleep(0.5)  # To avoid hitting the rate limit
-    return city_ids
-
-def get_events2(city_id):
-    logging.info('get_events')
-    arr_link_vk_all = []
-    url_all = f"https://api.vk.com/method/groups.search/?q=Туса&type=event&city_id={city_id}&future=1&offset=0&count=10&access_token={config.vk_token_all}&v={config.vk_api}"
-    response = requests.get(url_all)
-    data = response.json()
-    
-    if 'response' in data and 'items' in data['response']:
-        for event in data['response']['items']:
-            arr_link_vk_all.append(event['screen_name'])
-    time.sleep(0.5)
-    return arr_link_vk_all
-
-def get_events(city_id, city_name, event_ses, vk_ses):
-    logging.info('get_events')
-    arr_link_vk_all = []
-    vk_ses.method('messages.send', {
-        'user_id': event_ses.user_id,
-        'message': f"Идёт поиск тус города {city_name}",
-        'random_id': 0
-    })
-    for word in config.arr_word:#['1', ' ', 'а']:#
-        url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
-        response = requests.get(url_all)
-        data = response.json()
-        if 'response' in data and 'items' in data['response']:
-            for event in data['response']['items']:
-                arr_link_vk_all.append(event['screen_name'])
-        time.sleep(0.5)
-    return arr_link_vk_all
-
-
 def get_events_from_city_web(city, week, event_ses, vk_ses):
-    logging.info('get_events_from_city_web')
     end_urls = []
     unique_events = set()
     city_find = get_city_ids([city])
+    if city_find == 'error' or city_find == 'empty':
+        return False
     city_id = city_find[0]['id']
     city_name = city_find[0]['title']
     arr_link_vk_all = get_events(city_id, city_name, event_ses, vk_ses)
@@ -206,51 +167,22 @@ def get_events_from_city_web(city, week, event_ses, vk_ses):
                                 'start_date': start_date_formatted,
                                 'screen_name_link': screen_name_link
                             })
-            except Exception as e:
-                print(f"Ошибка при обработке события: {e}")
-        logging.info('209')
-        logging.info(len(end_urls))
+            except Exception:
+                pass
         end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
-        logging.info(212)
-        logging.info(len(end_urls))
         grouped_events = group_events_by_weekday(end_urls, city_name, week)
-        logging.info(215)
-        logging.info(len(grouped_events))
-        logging.info(217)
-        #logging.info(grouped_events[0])
-        ii = 0
-        for m in grouped_events:
-            if ii == 0:
-                logging.info(222)
-                logging.info(m)
         formatted_message = format_message(grouped_events, week)
-        logging.info(218)
-        logging.info(len(formatted_message))
         return formatted_message
     else:
         return False
 
-def get_group_info(group_ids):
-    logging.info('get_group_info')
-    group_info = []
-    for i in range(0, len(group_ids), 500):
-        groupIds = ','.join(group_ids[i:i + 500])
-        url = f"https://api.vk.com/method/groups.getById/?group_ids={groupIds}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
-        response = requests.get(url)
-        data = response.json()
-        if 'response' in data:
-            group_info.extend(data['response'])
-        time.sleep(1)
-    return group_info
-
-async def main():
+def main():
     vk_session = auth()
-    longpoll = VkLongPoll(vk_session)   
+    longpoll = VkLongPoll(vk_session)
     for event in longpoll.listen():
         if event.type == VkEventType.MESSAGE_NEW and event.to_me:
             message_text = event.text
             user_id = event.user_id
-            logging.info(f"Received message: {message_text} from user: {user_id}")
 
             if message_text.lower() == "начать":
                 vk_session.method('messages.send', {
@@ -259,7 +191,6 @@ async def main():
                     'random_id': 0
                 })
             else:
-                logging.info(message_text)
                 city_find = get_city_ids([message_text])
                 if city_find == 'empty':
                     vk_session.method('messages.send', {
@@ -277,12 +208,17 @@ async def main():
                     })
                 else:
                     city = city_find[0]['title']
-                    if city in cities_csv:
-                        events = read_csv('events.csv')
-                        grouped_events = group_events_by_weekday(events, city, 1)
-                        formatted_message = format_message(grouped_events, 1)
+                    events = get_events_from_city_web(city, 0, event, vk_session)
+                    if events is False:
+                        vk_session.method('messages.send', {
+                            'user_id': user_id,
+                            'message': f"Не нашли тусы в городе {city}, попробуйте другой",
+                            'random_id': 0,
+                            'disable_web_page_preview': 1
+                        })
+                    else:
                         i = 0
-                        for message in formatted_message:
+                        for message in events:
                             if i == 0:
                                 vk_session.method('messages.send', {
                                     'user_id': user_id,
@@ -297,48 +233,13 @@ async def main():
                                     'random_id': 0,
                                     'disable_web_page_preview': 1
                                 })
-                            i = i + 1
+                            i += 1
                         vk_session.method('messages.send', {
                             'user_id': user_id,
                             'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
                             'random_id': 0,
                             'disable_web_page_preview': 1
                         })
-                    else:
-                        events = get_events_from_city_web(city, 1, event, vk_session)
-                        logging.info(284)
-                        logging.info(events)
-                        if events == False:
-                            vk_session.method('messages.send', {
-                                'user_id': user_id,
-                                'message': f"Не нашли город {message_text}, введите другой",
-                                'random_id': 0,
-                                'disable_web_page_preview': 1
-                            })
-                        else:
-                            logging.info(len(events))
-                            i = 0
-                            for message in events:
-                                if i == 0:
-                                    vk_session.method('messages.send', {
-                                        'user_id': user_id,
-                                        'message': f"{city}\n\n" + message,
-                                        'random_id': 0,
-                                        'disable_web_page_preview': 1
-                                    })
-                                else:
-                                    vk_session.method('messages.send', {
-                                        'user_id': user_id,
-                                        'message': message,
-                                        'random_id': 0,
-                                        'disable_web_page_preview': 1
-                                    })
-                                i = i + 1
-                            vk_session.method('messages.send', {
-                                'user_id': user_id,
-                                'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
-                                'random_id': 0,
-                                'disable_web_page_preview': 1
-                            })
+
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
