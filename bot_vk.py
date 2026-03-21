@@ -161,27 +161,21 @@ def get_events2(city_id):
 def get_events(city_id, city_name, event_ses, vk_ses):
     logging.info('get_events')
     arr_link_vk_all = []
-    # проверка, есть ли вообще тусы в городе. Поиск по " "
-    url_one = f"https://api.vk.com/method/groups.search/?q= &type=event&city_id={city_id}&future=1&offset=0&count=1&access_token={config.vk_token_all}&v={config.vk_api}"
-    response = requests.get(url_one)
-    data = response.json()
-    if len(data['response']['items']) == 0:
-        return [] # если нет тус, возвращаем пустоту, чтоб не искать по всем словам/буквам
-    else:
-        vk_ses.method('messages.send', {
-            'user_id': event_ses.user_id,
-            'message': f"Идёт поиск тус города {city_name}",
-            'random_id': 0
-        })
-        for word in ['1', ' ', 'а']:#config.arr_word:
-            url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
-            response = requests.get(url_all)
-            data = response.json()
-            if 'response' in data and 'items' in data['response']:
-                for event in data['response']['items']:
-                    arr_link_vk_all.append(event['screen_name'])
-            time.sleep(0.5)
-        return arr_link_vk_all
+    vk_ses.method('messages.send', {
+        'user_id': event_ses.user_id,
+        'message': f"Идёт поиск тус города {city_name}",
+        'random_id': 0
+    })
+    for word in config.arr_word:#['1', ' ', 'а']:#
+        url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
+        response = requests.get(url_all)
+        data = response.json()
+        if 'response' in data and 'items' in data['response']:
+            for event in data['response']['items']:
+                arr_link_vk_all.append(event['screen_name'])
+        time.sleep(0.5)
+    return arr_link_vk_all
+
 
 def get_events_from_city_web(city, week, event_ses, vk_ses):
     logging.info('get_events_from_city_web')
