@@ -19,7 +19,7 @@ with open('events.csv', 'r', encoding='utf-8') as file:
     
     # Проходим по строкам файла
     for row in reader:
-        # Проверяем, совпадает ли дата события с текущей
+        # Проверяем, совпадает ли дата события с текущей и город не из списка больших
         if row['start_date'] == current_date_str and row['city'] not in ['Москва', 'Санкт-Петербург', 'Екатеринбург']:
             city = row['city']
             screen_name_link = row['screen_name_link']
@@ -37,22 +37,39 @@ with open('events.csv', 'r', encoding='utf-8') as file:
 
 # Выводим результаты
 for date, cities in events_by_date.items():
-    weekday_russian = {
-        'Monday': 'Понедельник',
-        'Tuesday': 'Вторник',
-        'Wednesday': 'Среда',
-        'Thursday': 'Четверг',
-        'Friday': 'Пятница',
-        'Saturday': 'Суббота',
-        'Sunday': 'Воскресенье'
-    }
+    # Словарь для перевода дней недели (можно взять из config, если он там есть)
+    # Если в config нет day_of_week_rus, оставляем локальный
+    try:
+        weekday_russian = config.day_of_week_rus
+    except AttributeError:
+        weekday_russian = {
+            'Monday': 'Понедельник',
+            'Tuesday': 'Вторник',
+            'Wednesday': 'Среда',
+            'Thursday': 'Четверг',
+            'Friday': 'Пятница',
+            'Saturday': 'Суббота',
+            'Sunday': 'Воскресенье'
+        }
     
     # Формируем текст для публикации
-    txtUrl = ""
-    for city, names in events_by_date.items():
-        txtUrl += f"{weekday_russian[current_weekday]} {date}\n"
+    txtUrl = f"{weekday_russian[current_weekday]} {date}\n"
     
-    for city, events in cities.items():
+    # Сортируем города: если задан first_city, он будет первым
+    if hasattr(config, 'first_city') and config.first_city != '':
+        # Создаем список городов, где first_city на первом месте
+        city_names = list(cities.keys())
+        # Убираем first_city из списка, если он там есть, чтобы потом добавить первым
+        if config.first_city in city_names:
+            city_names.remove(config.first_city)
+            sorted_cities = [config.first_city] + sorted(city_names)
+        else:
+            sorted_cities = sorted(city_names)
+    else:
+        sorted_cities = sorted(cities.keys())
+    
+    for city in sorted_cities:
+        events = cities[city]
         txtUrl += f"\n{city}\n"  # Перенос строки перед названием города
         for event in events:
             txtUrl += f"{event}\n"
@@ -60,13 +77,13 @@ for date, cities in events_by_date.items():
     txtUrl += '\n'
     txtUrl += "#тусынавыхи Остальное clck.ru/3KMog8"
     print(txtUrl)
+
 # Кодируем текст для URL
 encoded_txtUrl = urllib.parse.quote(txtUrl)
 
 # Задаем параметры для запроса к API ВКонтакте
 tomorrow = int((current_date + datetime.timedelta(days=1)).timestamp())
-vkToken = config.vk_token
-url = f'https://api.vk.com/method/wall.post?v=5.107&owner_id=-{config.owner_id}&access_token={vkToken}&from_group=1&message={encoded_txtUrl}&publish_date={tomorrow}'
+url = f'https://api.vk.com/method/wall.post?v=5.107&owner_id=-{config.owner_id}&access_token={config.vk_token}&from_group=1&message={encoded_txtUrl}&publish_date={tomorrow}'
 
 # Отправляем запрос
 response = requests.get(url)
