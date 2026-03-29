@@ -17,27 +17,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ------------------ Асинхронные HTTP-запросы ------------------
-async def vk_api_request_async(session, url, params=None, semaphore=None, max_retries=3):
-    """Асинхронный GET-запрос к API ВК с повторными попытками и семафором."""
-    if semaphore:
-        async with semaphore:
-            return await _fetch_with_retries(session, url, params, max_retries)
-    else:
-        return await _fetch_with_retries(session, url, params, max_retries)
-
-async def _fetch_with_retries(session, url, params, max_retries):
+async def vk_api_request_async(session, url, params=None, max_retries=3):
     for attempt in range(max_retries):
         try:
             async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    return data
+                    return await response.json()
                 else:
                     logger.warning(f"HTTP {response.status} при запросе {url}, попытка {attempt+1}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             logger.warning(f"Ошибка запроса (попытка {attempt+1}/{max_retries}): {e}")
         if attempt < max_retries - 1:
-            await asyncio.sleep(2 ** attempt)  # экспоненциальная задержка
+            await asyncio.sleep(0.2 ** attempt)
     logger.error(f"Не удалось выполнить запрос {url} после {max_retries} попыток")
     return None
 
@@ -51,7 +42,7 @@ def auth():
         raise
 
 # ------------------ Асинхронные функции для получения данных ------------------
-async def get_city_ids_async(cities, session, semaphore):
+async def get_city_ids_async(cities, session):
     city_ids = []
     for city in cities:
         params = {
@@ -62,7 +53,8 @@ async def get_city_ids_async(cities, session, semaphore):
             'count': 1
         }
         url = 'https://api.vk.com/method/database.getCities'
-        data = await vk_api_request_async(session, url, params, semaphore)
+        await asyncio.sleep(0.1)
+        data = await vk_api_request_async(session, url, params)
         if data and 'response' in data and 'items' in data['response'] and data['response']['items']:
             city_ids.append(data['response']['items'][0])
         elif data and 'error' in data:
@@ -71,10 +63,9 @@ async def get_city_ids_async(cities, session, semaphore):
         else:
             logger.info(f"Город '{city}' не найден")
             return 'empty'
-        await asyncio.sleep(0.2)  # небольшая задержка между запросами городов
     return city_ids
 
-async def get_events_async(city_id, city_name, event_ses, vk_ses, session, semaphore):
+async def get_events_async(city_id, city_name, event_ses, vk_ses, session):
     arr_link_vk_all = []
     try:
         vk_ses.method('messages.send', {
@@ -85,8 +76,6 @@ async def get_events_async(city_id, city_name, event_ses, vk_ses, session, semap
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение пользователю {event_ses.user_id}: {e}")
 
-    # Создаём задачи для всех слов
-    tasks = []
     for word in config.arr_word:
         params = {
             'q': word,
@@ -98,43 +87,36 @@ async def get_events_async(city_id, city_name, event_ses, vk_ses, session, semap
             'v': config.vk_api
         }
         url = 'https://api.vk.com/method/groups.search'
-        tasks.append(vk_api_request_async(session, url, params, semaphore))
-    
-    responses = await asyncio.gather(*tasks, return_exceptions=True)
-    for idx, data in enumerate(responses):
-        word = config.arr_word[idx]
-        if isinstance(data, Exception):
-            logger.error(f"Ошибка для слова '{word}': {data}")
-            continue
+        await asyncio.sleep(0.1)  # задержка для соблюдения лимита 3 запроса/сек
+        data = await vk_api_request_async(session, url, params)
         if data and 'response' in data and 'items' in data['response']:
             items = data['response']['items']
-            for event in items:
-                arr_link_vk_all.append(event['screen_name'])
+            arr_link_vk_all.extend(event['screen_name'] for event in items)
             logger.info(f"Получены события для города {city_name} (id {city_id}), слово '{word}', найдено {len(items)} групп")
         else:
             logger.info(f"Нет событий для слова '{word}' в городе {city_name}")
     return arr_link_vk_all
 
-async def get_group_info_async(group_ids, session, semaphore):
+async def get_group_info_async(group_ids, session):
     group_info = []
-    # Разбиваем на чанки по 500
     for i in range(0, len(group_ids), 500):
         chunk = group_ids[i:i+500]
         groupIds = ','.join(chunk)
-        url = f"https://api.vk.com/method/groups.getById/"
+        url = "https://api.vk.com/method/groups.getById/"
         params = {
             'group_ids': groupIds,
             'fields': 'start_date,finish_date,description,city',
             'access_token': config.vk_token_all,
             'v': config.vk_api
         }
-        data = await vk_api_request_async(session, url, params, semaphore)
+        await asyncio.sleep(0.1)
+        data = await vk_api_request_async(session, url, params)
         if data and 'response' in data:
             group_info.extend(data['response'])
             logger.info(f"Загружена информация о {len(data['response'])} группах (чанк {i//500 + 1})")
         else:
             logger.error(f"Ошибка при загрузке чанка {i//500 + 1}: {data}")
-            # Пробуем загрузить каждый элемент по отдельности
+            # Поштучная загрузка при ошибке чанка
             for gid in chunk:
                 single_params = {
                     'group_id': gid,
@@ -143,11 +125,10 @@ async def get_group_info_async(group_ids, session, semaphore):
                     'v': config.vk_api
                 }
                 single_url = 'https://api.vk.com/method/groups.getById'
-                single_data = await vk_api_request_async(session, single_url, single_params, semaphore)
+                await asyncio.sleep(0.1)
+                single_data = await vk_api_request_async(session, single_url, single_params)
                 if single_data and 'response' in single_data:
                     group_info.extend(single_data['response'])
-                await asyncio.sleep(0.2)
-        await asyncio.sleep(0.5)  # пауза между чанками
     return group_info
 
 # ------------------ Синхронные функции обработки данных (не требуют асинхронности) ------------------
@@ -222,21 +203,19 @@ def format_message(grouped_events, week):
 # ------------------ Асинхронная основная логика для одного города ------------------
 async def get_events_from_city_web_async(city, week, event_ses, vk_ses):
     async with aiohttp.ClientSession() as session:
-        semaphore = asyncio.Semaphore(3)
-        city_find = await get_city_ids_async([city], session, semaphore)
+        city_find = await get_city_ids_async([city], session)
         if city_find == 'error':
-            return 'ERROR'  # ошибка API
+            return 'ERROR'
         if city_find == 'empty':
-            return 'CITY_NOT_FOUND'  # город не существует
+            return 'CITY_NOT_FOUND'
         city_id = city_find[0]['id']
         city_name = city_find[0]['title']
         
-        arr_link_vk_all = await get_events_async(city_id, city_name, event_ses, vk_ses, session, semaphore)
+        arr_link_vk_all = await get_events_async(city_id, city_name, event_ses, vk_ses, session)
         if not arr_link_vk_all:
-            logger.info(f"В городе {city_name} не найдено групп-событий по ключевым словам")
             return False
         
-        group_info = await get_group_info_async(arr_link_vk_all, session, semaphore)
+        group_info = await get_group_info_async(arr_link_vk_all, session)
         end_urls = []
         unique_events = set()
         for event in group_info:
