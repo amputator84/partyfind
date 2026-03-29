@@ -170,6 +170,8 @@ def get_events_from_city_web(city, week, event_ses, vk_ses):
             except Exception:
                 pass
         end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
+        if not end_urls:
+            return False
         grouped_events = group_events_by_weekday(end_urls, city_name, week)
         formatted_message = format_message(grouped_events, week)
         return formatted_message
