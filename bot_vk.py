@@ -10,30 +10,23 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
 
-def vk_api_request(url, params=None, max_retries=3):
-    """Выполняет GET-запрос к API ВК с автоматическими повторными попытками."""
-    session = requests.Session()
-    retry_strategy = Retry(
-        total=max_retries,
-        backoff_factor=1,  # 1, 2, 4 секунды
-        status_forcelist=[500, 502, 503, 504],
-        allowed_methods=["GET"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    
+def vk_api_request(url, params=None, max_retries=3, timeout=(10, 30)):
+    """Выполняет GET-запрос с автоматическими повторными попытками при сетевых ошибках."""
     for attempt in range(max_retries):
         try:
-            response = session.get(url, params=params, timeout=15)
-            response.raise_for_status()  # выбросит исключение при HTTP ошибке
+            response = requests.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
             return response
-        except (ChunkedEncodingError, ConnectionError, Timeout, Exception) as e:
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.SSLError,
+                ConnectionError) as e:
             logger.warning(f"Попытка {attempt+1}/{max_retries} не удалась: {e}")
             if attempt == max_retries - 1:
-                logger.error(f"Не удалось выполнить запрос после {max_retries} попыток: {url}")
+                logger.error(f"Запрос к {url} не удался после {max_retries} попыток")
                 raise
-            time.sleep(2 ** attempt)  # экспоненциальная задержка
+            time.sleep(2 ** attempt)  # 1, 2, 4 секунды
     return None
 
 # Настройка логирования
@@ -97,38 +90,62 @@ def get_events(city_id, city_name, event_ses, vk_ses):
         })
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение пользователю {event_ses.user_id}: {e}")
-
+    # ... отправка сообщения ...
     for word in config.arr_word:
         try:
-            url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
-            response = vk_api_request(url_all)
+            url = "https://api.vk.com/method/groups.search"
+            params = {
+                'q': word, 'type': 'event', 'city_id': city_id,
+                'future': 1, 'count': 999, 'access_token': config.vk_token_all,
+                'v': config.vk_api
+            }
+            response = vk_api_request(url, params=params)
+            if response is None:
+                continue
             data = response.json()
-            # logger.info(f"Получены события для города {city_id}, слово '{word}', найдено {len(data['response']['items'])} групп")
             if 'response' in data and 'items' in data['response']:
                 for event in data['response']['items']:
                     arr_link_vk_all.append(event['screen_name'])
+                logger.info(f"Получены события для города {city_id}, слово '{word}', найдено {len(data['response']['items'])} групп")
             else:
-                logger.warning(f"Нет событий для слова '{word}' в городе id {city_id}: {data}")
+                logger.warning(f"Нет событий для слова '{word}' в городе {city_id}")
         except Exception as e:
-            logger.error(f"Ошибка при запросе groups.search (слово '{word}', город {city_id}): {e}\n{traceback.format_exc()}")
-        time.sleep(0.5)
+            logger.error(f"Ошибка при запросе groups.search (слово '{word}', город {city_id}): {e}")
+            continue
+        time.sleep(0.33)  # уменьшенная задержка между словами
     return arr_link_vk_all
 
 def get_group_info(group_ids):
     group_info = []
     for i in range(0, len(group_ids), 500):
-        groupIds = ','.join(group_ids[i:i + 500])
+        chunk = group_ids[i:i+500]
+        groupIds = ','.join(chunk)
         url = f"https://api.vk.com/method/groups.getById/?group_ids={groupIds}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
+        
         try:
-            response = vk_api_request(url)
+            response = vk_api_request(url, timeout=(10, 45))  # дольше на чтение
             data = response.json()
             if 'response' in data:
                 group_info.extend(data['response'])
+                logger.info(f"Загружена информация о {len(data['response'])} группах из чанка {i//500 + 1}")
             else:
-                logger.error(f"Ошибка в groups.getById: {data}")
+                logger.error(f"Ошибка в groups.getById для чанка {i//500 + 1}: {data.get('error', 'неизвестная ошибка')}")
+                # Пробуем загрузить чанк по одному элементу (медленно, но надёжно)
+                for gid in chunk:
+                    try:
+                        single_url = f"https://api.vk.com/method/groups.getById?group_id={gid}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
+                        resp = vk_api_request(single_url)
+                        if resp and 'response' in resp.json():
+                            group_info.extend(resp.json()['response'])
+                        time.sleep(0.2)
+                    except Exception as e:
+                        logger.error(f"Не удалось загрузить группу {gid}: {e}")
         except Exception as e:
-            logger.error(f"Исключение при получении информации о группах: {e}\n{traceback.format_exc()}")
-        time.sleep(1)
+            logger.error(f"Критическая ошибка при загрузке чанка {i//500 + 1}: {e}")
+            # Пропускаем чанк, но продолжаем со следующим
+            continue
+        
+        time.sleep(0.5)  # пауза между чанками
     return group_info
 
 def group_events_by_weekday(events, city, week):
