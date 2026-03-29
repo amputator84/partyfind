@@ -21,6 +21,24 @@ logger = logging.getLogger(__name__)
 # Пул потоков для обработки сообщений (не более 10 одновременных задач)
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
+# Словарь для хранения блокировок пользователей
+user_locks = {}
+# Защита словаря от гонок при создании новых блокировок
+dict_lock = threading.Lock()
+
+def get_user_lock(user_id):
+    """Возвращает блокировку для указанного пользователя (создаёт при необходимости)."""
+    with dict_lock:
+        if user_id not in user_locks:
+            user_locks[user_id] = threading.Lock()
+        return user_locks[user_id]
+
+def release_user_lock(user_id, lock):
+    """Освобождает блокировку пользователя и удаляет её из словаря (опционально)."""
+    lock.release()
+    # Не удаляем блокировку из словаря, чтобы не создавать новую при следующем запросе
+    # (очистка не критична, т.к. объекты маленькие)
+
 def vk_api_request(url, params=None, max_retries=3, timeout=(10, 30)):
     """Выполняет GET-запрос с автоматическими повторными попытками при сетевых ошибках."""
     for attempt in range(max_retries):
@@ -288,8 +306,8 @@ def get_events_from_city_web(city, week, user_id):
         logger.error(f"Критическая ошибка в get_events_from_city_web для города {city}: {e}\n{traceback.format_exc()}")
         return False
 
-def handle_message(user_id, message_text):
-    """Функция обработки сообщения, запускается в отдельном потоке."""
+def handle_message(user_id, message_text, user_lock):
+    """Функция обработки сообщения, запускается в отдельном потоке с блокировкой."""
     try:
         if message_text.lower() == "начать":
             send_message(user_id, 'Привет! Введи город на русском, поищем в нём тусы')
@@ -324,6 +342,9 @@ def handle_message(user_id, message_text):
             send_message(user_id, 'Произошла внутренняя ошибка, попробуйте позже.')
         except:
             pass
+    finally:
+        # Освобождаем блокировку пользователя после завершения обработки
+        release_user_lock(user_id, user_lock)
 
 def main():
     try:
@@ -337,8 +358,17 @@ def main():
     for event in longpoll.listen():
         try:
             if event.type == VkEventType.MESSAGE_NEW and event.to_me:
-                # Запускаем обработку сообщения в отдельном потоке
-                executor.submit(handle_message, event.user_id, event.text)
+                user_id = event.user_id
+                # Получаем блокировку для пользователя
+                user_lock = get_user_lock(user_id)
+                # Пытаемся захватить блокировку без ожидания
+                if user_lock.acquire(blocking=False):
+                    # Если удалось захватить, запускаем обработку в потоке
+                    executor.submit(handle_message, user_id, event.text, user_lock)
+                else:
+                    # Пользователь уже обрабатывает предыдущий запрос
+                    send_message(user_id, "Ща ща, погоди")
+                    logger.info(f"Пользователь {user_id} пытался запустить новый поиск, пока обрабатывается старый")
         except Exception as e:
             logger.error(f"Ошибка при получении события: {e}\n{traceback.format_exc()}")
 
