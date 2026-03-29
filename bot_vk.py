@@ -1,12 +1,31 @@
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
-import asyncio
-import aiohttp
+import requests
 import time
 from datetime import datetime, timedelta
 import config
 import logging
 import traceback
+from requests.exceptions import ChunkedEncodingError, ConnectionError, Timeout
+
+def vk_api_request(url, params=None, max_retries=3, timeout=(10, 30)):
+    """Выполняет GET-запрос с автоматическими повторными попытками при сетевых ошибках."""
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.SSLError,
+                ConnectionError) as e:
+            logger.warning(f"Попытка {attempt+1}/{max_retries} не удалась: {e}")
+            if attempt == max_retries - 1:
+                logger.error(f"Запрос к {url} не удался после {max_retries} попыток")
+                raise
+            time.sleep(0.2 ** attempt)  # 1, 2, 4 секунды
+    return None
 
 # Настройка логирования
 logging.basicConfig(
@@ -16,23 +35,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ------------------ Асинхронные HTTP-запросы ------------------
-async def vk_api_request_async(session, url, params=None, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    logger.warning(f"HTTP {response.status} при запросе {url}, попытка {attempt+1}")
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            logger.warning(f"Ошибка запроса (попытка {attempt+1}/{max_retries}): {e}")
-        if attempt < max_retries - 1:
-            await asyncio.sleep(0.2 ** attempt)
-    logger.error(f"Не удалось выполнить запрос {url} после {max_retries} попыток")
-    return None
-
-# ------------------ Синхронные обёртки для VK API (авторизация, отправка сообщений) ------------------
 def auth():
     try:
         vk_session = vk_api.VkApi(token=config.vk_token)
@@ -41,31 +43,42 @@ def auth():
         logger.error(f"Ошибка авторизации: {e}\n{traceback.format_exc()}")
         raise
 
-# ------------------ Асинхронные функции для получения данных ------------------
-async def get_city_ids_async(cities, session):
+def get_city_ids(cities):
     city_ids = []
     for city in cities:
-        params = {
-            'access_token': config.vk_token_all,
-            'v': '5.131',
-            'country_id': 1,
-            'q': city,
-            'count': 1
-        }
-        url = 'https://api.vk.com/method/database.getCities'
-        await asyncio.sleep(0.1)
-        data = await vk_api_request_async(session, url, params)
-        if data and 'response' in data and 'items' in data['response'] and data['response']['items']:
-            city_ids.append(data['response']['items'][0])
-        elif data and 'error' in data:
-            logger.error(f"Ошибка API при поиске города '{city}': {data['error']}")
+        try:
+            response = vk_api_request(
+                'https://api.vk.com/method/database.getCities',
+                params={
+                    'access_token': config.vk_token_all,
+                    'v': '5.131',
+                    'country_id': 1,
+                    'q': city,
+                    'count': 1
+                }
+            )
+            if response is None:
+                return 'error'
+            data = response.json()
+            if 'response' in data and 'items' in data['response'] and len(data['response']['items']) > 0:
+                city_ids.append(data['response']['items'][0])
+            else:
+                if 'error' in data:
+                    logger.error(f"Ошибка API при поиске города '{city}': {data['error']}")
+                    return 'error'
+                elif (len(data['response']['items']) == 0):
+                    logger.info(f"Город '{city}' не найден")
+                    return 'empty'
+                else:
+                    logger.error(f"Неизвестный ответ API для города '{city}': {data}")
+                    return 'error'
+        except Exception as e:
+            logger.error(f"Исключение в get_city_ids для города '{city}': {e}\n{traceback.format_exc()}")
             return 'error'
-        else:
-            logger.info(f"Город '{city}' не найден")
-            return 'empty'
+        time.sleep(0.1)
     return city_ids
 
-async def get_events_async(city_id, city_name, event_ses, vk_ses, session):
+def get_events(city_id, city_name, event_ses, vk_ses):
     arr_link_vk_all = []
     try:
         vk_ses.method('messages.send', {
@@ -75,63 +88,65 @@ async def get_events_async(city_id, city_name, event_ses, vk_ses, session):
         })
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение пользователю {event_ses.user_id}: {e}")
-
+    # ... отправка сообщения ...
     for word in config.arr_word:
-        params = {
-            'q': word,
-            'type': 'event',
-            'city_id': city_id,
-            'future': 1,
-            'count': 999,
-            'access_token': config.vk_token_all,
-            'v': config.vk_api
-        }
-        url = 'https://api.vk.com/method/groups.search'
-        await asyncio.sleep(0.1)  # задержка для соблюдения лимита 3 запроса/сек
-        data = await vk_api_request_async(session, url, params)
-        if data and 'response' in data and 'items' in data['response']:
-            items = data['response']['items']
-            arr_link_vk_all.extend(event['screen_name'] for event in items)
-            logger.info(f"Получены события для города {city_name} (id {city_id}), слово '{word}', найдено {len(items)} групп")
-        else:
-            logger.info(f"Нет событий для слова '{word}' в городе {city_name}")
+        try:
+            url = "https://api.vk.com/method/groups.search"
+            params = {
+                'q': word, 'type': 'event', 'city_id': city_id,
+                'future': 1, 'count': 999, 'access_token': config.vk_token_all,
+                'v': config.vk_api
+            }
+            response = vk_api_request(url, params=params)
+            if response is None:
+                continue
+            data = response.json()
+            if 'response' in data and 'items' in data['response']:
+                for event in data['response']['items']:
+                    arr_link_vk_all.append(event['screen_name'])
+                logger.info(f"Получены события для города {city_id}, слово '{word}', найдено {len(data['response']['items'])} групп")
+            else:
+                logger.warning(f"Нет событий для слова '{word}' в городе {city_id}")
+        except Exception as e:
+            logger.error(f"Ошибка при запросе groups.search (слово '{word}', город {city_id}): {e}")
+            continue
+        time.sleep(0.1)  # уменьшенная задержка между словами
     return arr_link_vk_all
 
-async def get_group_info_async(group_ids, session):
+def get_group_info(group_ids):
     group_info = []
+    logger.info(len(group_ids))
     for i in range(0, len(group_ids), 500):
         chunk = group_ids[i:i+500]
         groupIds = ','.join(chunk)
-        url = "https://api.vk.com/method/groups.getById/"
-        params = {
-            'group_ids': groupIds,
-            'fields': 'start_date,finish_date,description,city',
-            'access_token': config.vk_token_all,
-            'v': config.vk_api
-        }
-        await asyncio.sleep(0.1)
-        data = await vk_api_request_async(session, url, params)
-        if data and 'response' in data:
-            group_info.extend(data['response'])
-            logger.info(f"Загружена информация о {len(data['response'])} группах (чанк {i//500 + 1})")
-        else:
-            logger.error(f"Ошибка при загрузке чанка {i//500 + 1}: {data}")
-            # Поштучная загрузка при ошибке чанка
-            for gid in chunk:
-                single_params = {
-                    'group_id': gid,
-                    'fields': 'start_date,finish_date,description,city',
-                    'access_token': config.vk_token_all,
-                    'v': config.vk_api
-                }
-                single_url = 'https://api.vk.com/method/groups.getById'
-                await asyncio.sleep(0.1)
-                single_data = await vk_api_request_async(session, single_url, single_params)
-                if single_data and 'response' in single_data:
-                    group_info.extend(single_data['response'])
+        url = f"https://api.vk.com/method/groups.getById/?group_ids={groupIds}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
+        
+        try:
+            response = vk_api_request(url, timeout=(10, 45))  # дольше на чтение
+            data = response.json()
+            if 'response' in data:
+                group_info.extend(data['response'])
+                logger.info(f"Загружена информация о {len(data['response'])} группах из чанка {i//500 + 1}")
+            else:
+                logger.error(f"Ошибка в groups.getById для чанка {i//500 + 1}: {data.get('error', 'неизвестная ошибка')}")
+                # Пробуем загрузить чанк по одному элементу (медленно, но надёжно)
+                for gid in chunk:
+                    try:
+                        single_url = f"https://api.vk.com/method/groups.getById?group_id={gid}&fields=start_date,finish_date,description,city&access_token={config.vk_token_all}&v={config.vk_api}"
+                        resp = vk_api_request(single_url)
+                        if resp and 'response' in resp.json():
+                            group_info.extend(resp.json()['response'])
+                        time.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Не удалось загрузить группу {gid}: {e}")
+        except Exception as e:
+            logger.error(f"Критическая ошибка при загрузке чанка {i//500 + 1}: {e}")
+            # Пропускаем чанк, но продолжаем со следующим
+            continue
+        
+        time.sleep(0.1)  # пауза между чанками
     return group_info
 
-# ------------------ Синхронные функции обработки данных (не требуют асинхронности) ------------------
 def group_events_by_weekday(events, city, week):
     filtered_events = [event for event in events if event['city'].lower() == city.lower()]
     for event in filtered_events:
@@ -149,10 +164,12 @@ def group_events_by_weekday(events, city, week):
         if weekday not in grouped_events:
             grouped_events[weekday] = []
         grouped_events[weekday].append(event)
+
     return grouped_events
 
 def format_message(grouped_events, week):
     message_parts = []
+
     if week == 1:
         for weekday, events in grouped_events.items():
             message_parts.append(f"{config.day_of_week_rus[weekday]} {events[0]['start_date'].strftime('%d.%m.%Y')}")
@@ -164,17 +181,18 @@ def format_message(grouped_events, week):
         for events in grouped_events.values():
             for event in events:
                 all_dates.append(event['start_date'])
-        if not all_dates:
-            return []
+        
         min_date = min(all_dates)
         max_date = max(all_dates)
         current_date = min_date
+        
         while current_date <= max_date:
             events_today = []
             for events in grouped_events.values():
                 for event in events:
                     if event['start_date'].date() == current_date.date():
                         events_today.append(event)
+            
             if events_today:
                 weekday = current_date.strftime('%A')
                 message_parts.append(f"{config.day_of_week_rus[weekday]} {current_date.strftime('%d.%m.%Y')}")
@@ -185,6 +203,7 @@ def format_message(grouped_events, week):
     
     formatted_message = "\n".join(message_parts).strip()
     messages = []
+    
     if len(formatted_message) > 4096:
         message_parts = formatted_message.split('\n')
         current_part = ""
@@ -198,58 +217,57 @@ def format_message(grouped_events, week):
             messages.append(current_part.strip())
     else:
         messages.append(formatted_message)
+    
     return messages
 
-# ------------------ Асинхронная основная логика для одного города ------------------
-async def get_events_from_city_web_async(city, week, event_ses, vk_ses):
-    async with aiohttp.ClientSession() as session:
-        city_find = await get_city_ids_async([city], session)
-        if city_find == 'error':
-            return 'ERROR'
-        if city_find == 'empty':
-            return 'CITY_NOT_FOUND'
-        city_id = city_find[0]['id']
-        city_name = city_find[0]['title']
-        
-        arr_link_vk_all = await get_events_async(city_id, city_name, event_ses, vk_ses, session)
-        if not arr_link_vk_all:
-            return False
-        
-        group_info = await get_group_info_async(arr_link_vk_all, session)
+def get_events_from_city_web(city, week, event_ses, vk_ses):
+    try:
         end_urls = []
         unique_events = set()
-        for event in group_info:
-            try:
-                start_date = event.get('start_date')
-                city_event = event.get('city', {})
-                if start_date and start_date > int(datetime.now().timestamp()):
-                    start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
-                    screen_name_link = event.get('screen_name')
-                    name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
-                    if city_event.get('title'):
-                        event_tuple = (city_event['title'], name, start_date_formatted)
-                        if event_tuple not in unique_events:
-                            unique_events.add(event_tuple)
-                            end_urls.append({
-                                'city': city_event['title'],
-                                'name': name,
-                                'start_date': start_date_formatted,
-                                'screen_name_link': screen_name_link
-                            })
-            except Exception as e:
-                logger.error(f"Ошибка обработки события {event.get('id', 'unknown')}: {e}")
-                continue
-        end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
-        if not end_urls:
-            logger.info(f"В городе {city_name} нет будущих мероприятий после фильтрации")
+        city_find = get_city_ids([city])
+        if city_find == 'error' or city_find == 'empty':
             return False
-        grouped_events = group_events_by_weekday(end_urls, city_name, week)
-        formatted_messages = format_message(grouped_events, week)
-        if not end_urls:
-            return False  # мероприятий нет
-        return formatted_messages  # список сообщений
+        city_id = city_find[0]['id']
+        city_name = city_find[0]['title']
+        arr_link_vk_all = get_events(city_id, city_name, event_ses, vk_ses)
+        if len(arr_link_vk_all) > 0:
+            group_info = get_group_info(arr_link_vk_all)
+            for event in group_info:
+                try:
+                    start_date = event.get('start_date')
+                    city_event = event.get('city', {})
+                    if start_date and start_date > int(datetime.now().timestamp()):
+                        start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
+                        screen_name_link = event.get('screen_name')
+                        name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
 
-# ------------------ Синхронный обработчик сообщений (запускает асинхронную функцию) ------------------
+                        if city_event.get('title'):
+                            event_tuple = (city_event['title'], name, start_date_formatted)
+                            if event_tuple not in unique_events:
+                                unique_events.add(event_tuple)
+                                end_urls.append({
+                                    'city': city_event['title'],
+                                    'name': name,
+                                    'start_date': start_date_formatted,
+                                    'screen_name_link': screen_name_link
+                                })
+                except Exception as e:
+                    logger.error(f"Ошибка обработки события {event.get('id', 'unknown')}: {e}")
+                    continue
+            end_urls.sort(key=lambda x: (x['city'], datetime.strptime(x['start_date'], '%d.%m.%Y')))
+            if not end_urls:
+                logger.info(f"В городе {city_name} нет будущих мероприятий после фильтрации")
+                return False
+            grouped_events = group_events_by_weekday(end_urls, city_name, week)
+            formatted_message = format_message(grouped_events, week)
+            return formatted_message
+        else:
+            logger.info(f"В городе {city_name} не найдено групп-событий по ключевым словам")
+            return False
+    except Exception as e:
+        logger.error(f"Критическая ошибка в get_events_from_city_web для города {city}: {e}\n{traceback.format_exc()}")
+        return False
+
 def main():
     try:
         vk_session = auth()
@@ -273,64 +291,60 @@ def main():
                     })
                     logger.info(f"Пользователь {user_id} отправил команду 'начать'")
                 else:
-                    city = message_text.strip()
-                    logger.info(f"Пользователь {user_id} запросил город '{city}'")
-                    
-                    # Запускаем асинхронный поиск
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        result = loop.run_until_complete(
-                            get_events_from_city_web_async(city, 0, event, vk_session)
-                        )
-                    finally:
-                        loop.close()
-                    
-                    if result == 'CITY_NOT_FOUND':
+                    city_find = get_city_ids([message_text])
+                    if city_find == 'empty':
                         vk_session.method('messages.send', {
                             'user_id': user_id,
-                            'message': f"Не нашли город {city}, введите другой",
+                            'message': f"Не нашли город {message_text}, введите другой",
                             'random_id': 0,
                             'disable_web_page_preview': 1
                         })
-                    elif result == 'ERROR':
+                        logger.info(f"Пользователь {user_id} ввёл несуществующий город '{message_text}'")
+                    elif city_find == 'error':
                         vk_session.method('messages.send', {
                             'user_id': user_id,
                             'message': f"Какая-то ошибка, напиши админу",
                             'random_id': 0,
                             'disable_web_page_preview': 1
                         })
-                    elif result is False:
-                        vk_session.method('messages.send', {
-                            'user_id': user_id,
-                            'message': f"В '{city}' тус нет",
-                            'random_id': 0,
-                            'disable_web_page_preview': 1
-                        })
+                        logger.error(f"Ошибка API при поиске города '{message_text}' для пользователя {user_id}")
                     else:
-                        # result – список сообщений
-                        for i, message in enumerate(result):
-                            if i == 0:
-                                vk_session.method('messages.send', {
-                                    'user_id': user_id,
-                                    'message': f"{city}\n\n" + message,
-                                    'random_id': 0,
-                                    'disable_web_page_preview': 1
-                                })
-                            else:
-                                vk_session.method('messages.send', {
-                                    'user_id': user_id,
-                                    'message': message,
-                                    'random_id': 0,
-                                    'disable_web_page_preview': 1
-                                })
-                        vk_session.method('messages.send', {
-                            'user_id': user_id,
-                            'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
-                            'random_id': 0,
-                            'disable_web_page_preview': 1
-                        })
-                        logger.info(f"Пользователю {user_id} отправлено {len(result)} сообщений")
+                        city = city_find[0]['title']
+                        logger.info(f"Пользователь {user_id} выбрал город '{city}'")
+                        events = get_events_from_city_web(city, 0, event, vk_session)
+                        if events is False:
+                            vk_session.method('messages.send', {
+                                'user_id': user_id,
+                                'message': f"В '{city}' тус нет",
+                                'random_id': 0,
+                                'disable_web_page_preview': 1
+                            })
+                            logger.info(f"В городе '{city}' не найдено мероприятий для пользователя {user_id}")
+                        else:
+                            i = 0
+                            for message in events:
+                                if i == 0:
+                                    vk_session.method('messages.send', {
+                                        'user_id': user_id,
+                                        'message': f"{city}\n\n" + message,
+                                        'random_id': 0,
+                                        'disable_web_page_preview': 1
+                                    })
+                                else:
+                                    vk_session.method('messages.send', {
+                                        'user_id': user_id,
+                                        'message': message,
+                                        'random_id': 0,
+                                        'disable_web_page_preview': 1
+                                    })
+                                i += 1
+                            vk_session.method('messages.send', {
+                                'user_id': user_id,
+                                'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
+                                'random_id': 0,
+                                'disable_web_page_preview': 1
+                            })
+                            logger.info(f"Пользователю {user_id} отправлено {len(events)} сообщений с мероприятиями города '{city}'")
         except Exception as e:
             logger.error(f"Необработанная ошибка при обработке события: {e}\n{traceback.format_exc()}")
             try:
