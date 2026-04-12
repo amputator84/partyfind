@@ -50,7 +50,7 @@ def get_events(city_id, city_name, event_ses, vk_ses):
         'message': f"Идёт поиск тус города {city_name}",
         'random_id': 0
     })
-    for word in ['1', ' ', 'а']: #config.arr_word:
+    for word in config.arr_word: #['1', ' ', 'а']
         url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
         response = requests.get(url_all)
         data = response.json()
