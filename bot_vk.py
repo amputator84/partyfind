@@ -13,6 +13,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Словарь для отслеживания активных поисков пользователей
+active_searches = {}
+
 def auth():
     vk_session = vk_api.VkApi(token=config.vk_token)
     return vk_session
@@ -50,7 +53,7 @@ def get_events(city_id, city_name, event_ses, vk_ses):
         'message': f"Идёт поиск тус города {city_name}",
         'random_id': 0
     })
-    for word in config.arr_word: #['1', ' ', 'а']
+    for word in ['1', ' ', 'а']: #config.arr_word:
         url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
         response = requests.get(url_all)
         data = response.json()
@@ -205,6 +208,15 @@ def main():
                     'random_id': 0
                 })
             else:
+                # Проверяем, есть ли активный поиск для этого пользователя
+                if user_id in active_searches and active_searches[user_id]:
+                    vk_session.method('messages.send', {
+                        'user_id': user_id,
+                        'message': 'Ща-ща',
+                        'random_id': 0
+                    })
+                    continue
+
                 city_find = get_city_ids([message_text])
                 if city_find == 'empty':
                     vk_session.method('messages.send', {
@@ -221,39 +233,45 @@ def main():
                         'disable_web_page_preview': 1
                     })
                 else:
-                    city = city_find[0]['title']
-                    events = get_events_from_city_web(city, 0, event, vk_session)
-                    if events is False:
-                        vk_session.method('messages.send', {
-                            'user_id': user_id,
-                            'message': f"Не нашли тусы в городе {city}, попробуйте другой",
-                            'random_id': 0,
-                            'disable_web_page_preview': 1
-                        })
-                    else:
-                        i = 0
-                        for message in events:
-                            if i == 0:
-                                vk_session.method('messages.send', {
-                                    'user_id': user_id,
-                                    'message': f"{city}\n\n" + message,
-                                    'random_id': 0,
-                                    'disable_web_page_preview': 1
-                                })
-                            else:
-                                vk_session.method('messages.send', {
-                                    'user_id': user_id,
-                                    'message': message,
-                                    'random_id': 0,
-                                    'disable_web_page_preview': 1
-                                })
-                            i += 1
-                        vk_session.method('messages.send', {
-                            'user_id': user_id,
-                            'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
-                            'random_id': 0,
-                            'disable_web_page_preview': 1
-                        })
+                    # Устанавливаем флаг активного поиска
+                    active_searches[user_id] = True
+                    try:
+                        city = city_find[0]['title']
+                        events = get_events_from_city_web(city, 0, event, vk_session)
+                        if events is False:
+                            vk_session.method('messages.send', {
+                                'user_id': user_id,
+                                'message': f"Не нашли тусы в городе {city}, попробуйте другой",
+                                'random_id': 0,
+                                'disable_web_page_preview': 1
+                            })
+                        else:
+                            i = 0
+                            for message in events:
+                                if i == 0:
+                                    vk_session.method('messages.send', {
+                                        'user_id': user_id,
+                                        'message': f"{city}\n\n" + message,
+                                        'random_id': 0,
+                                        'disable_web_page_preview': 1
+                                    })
+                                else:
+                                    vk_session.method('messages.send', {
+                                        'user_id': user_id,
+                                        'message': message,
+                                        'random_id': 0,
+                                        'disable_web_page_preview': 1
+                                    })
+                                i += 1
+                            vk_session.method('messages.send', {
+                                'user_id': user_id,
+                                'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
+                                'random_id': 0,
+                                'disable_web_page_preview': 1
+                            })
+                    finally:
+                        # Снимаем флаг активного поиска в любом случае
+                        active_searches[user_id] = False
 
 if __name__ == '__main__':
     main()
