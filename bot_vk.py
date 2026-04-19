@@ -23,12 +23,14 @@ lock = threading.Lock()
 user_city_count = defaultdict(int)
 # Текущий обрабатываемый город для пользователя
 user_current_city = {}
-# Очередь пользователей (не городов)
-user_queue = deque()
+# Очередь запросов (пользователь, город, event)
+request_queue = deque()
 # Флаг работы обработчика очереди
 queue_processor_running = False
 # Поток обработчика очереди
 queue_thread = None
+# Флаг, указывающий, что сейчас обрабатывается запрос
+is_processing = False
 
 def auth():
     vk_session = vk_api.VkApi(token=config.vk_token)
@@ -67,7 +69,7 @@ def get_events(city_id, city_name, event_ses, vk_ses):
         'message': f"Идёт поиск тус города {city_name}",
         'random_id': 0
     })
-    for word in ['1', ' ', 'а']: #config.arr_word:
+    for word in config.arr_word: # ['1', ' ', 'а']:
         url_all = f"https://api.vk.com/method/groups.search/?q={word}&type=event&city_id={city_id}&future=1&offset=0&count=999&access_token={config.vk_token_all}&v={config.vk_api}"
         response = requests.get(url_all)
         data = response.json()
@@ -205,6 +207,7 @@ def get_events_from_city_web(city, week, event_ses, vk_ses):
 
 def process_user_city(user_id, city, event, vk_session):
     """Обработка одного города для пользователя"""
+    global is_processing
     try:
         logger.info(f"Пользователь {user_id} ищет город: {city}")
         events = get_events_from_city_web(city, 0, event, vk_session)
@@ -254,36 +257,48 @@ def process_user_city(user_id, city, event, vk_session):
                 user_city_count[user_id] -= 1
                 if user_city_count[user_id] <= 0:
                     del user_city_count[user_id]
+            
+            # Снимаем флаг обработки
+            is_processing = False
 
 def queue_processor(vk_session):
-    """Фоновый обработчик очереди"""
-    global queue_processor_running
+    """Фоновый обработчик очереди - обрабатывает строго по одному запросу"""
+    global queue_processor_running, is_processing
     
     while queue_processor_running:
         user_data = None
         
         with lock:
-            if user_queue:
-                user_data = user_queue.popleft()
+            # Берем следующий запрос только если сейчас ничего не обрабатывается
+            if not is_processing and request_queue:
+                user_data = request_queue.popleft()
+                is_processing = True
         
         if user_data:
             user_id, city, event = user_data
             
-            # Проверяем, не активен ли уже пользователь
             with lock:
-                if active_searches.get(user_id, False):
-                    continue
                 active_searches[user_id] = True
                 user_current_city[user_id] = city
             
-            # Запускаем обработку в отдельном потоке
-            thread = threading.Thread(
-                target=process_user_city,
-                args=(user_id, city, event, vk_session)
-            )
-            thread.start()
+            # Обрабатываем запрос в том же потоке (синхронно)
+            process_user_city(user_id, city, event, vk_session)
+            
+            # Отправляем уведомление следующему в очереди
+            with lock:
+                if request_queue:
+                    next_user_id = request_queue[0][0]
+                    # Можно отправить уведомление следующему пользователю
+                    try:
+                        vk_session.method('messages.send', {
+                            'user_id': next_user_id,
+                            'message': f'Погнали...',
+                            'random_id': 0
+                        })
+                    except:
+                        pass
         
-        time.sleep(0.1)  # Небольшая задержка, чтобы не нагружать CPU
+        time.sleep(0.5)  # Небольшая задержка между запросами
 
 def start_queue_processor(vk_session):
     """Запуск фонового обработчика очереди"""
@@ -338,7 +353,7 @@ def main():
             if is_active:
                 vk_session.method('messages.send', {
                     'user_id': user_id,
-                    'message': f'Сейчас ищутся тусы города {current_city}',
+                    'message': f'Пока ищем тусы города {current_city}',
                     'random_id': 0
                 })
                 logger.info(f"Пользователь {user_id} пытался ввести новый город, пока идет поиск {current_city}")
@@ -367,17 +382,24 @@ def main():
                     user_city_count[user_id] = user_city_count.get(user_id, 0) + 1
                     
                     # Добавляем в очередь
-                    user_queue.append((user_id, city, event))
-                    queue_position = len(user_queue)
+                    request_queue.append((user_id, city, event))
+                    queue_position = len(request_queue)
+                    
+                    # Если это первый в очереди и ничего не обрабатывается - не отправляем сообщение об ожидании
+                    if queue_position == 1 and not is_processing:
+                        pass  # Обработчик сам возьмет и отправит уведомление
+                    else:
+                        # Отправляем сообщение об ожидании
+                        wait_message = f'Очередь {queue_position}'
+                        if is_processing:
+                            wait_message += ' Ждём...'
+                        vk_session.method('messages.send', {
+                            'user_id': user_id,
+                            'message': wait_message,
+                            'random_id': 0
+                        })
                 
                 logger.info(f"Пользователь {user_id} добавил город {city} в очередь. Позиция: {queue_position}")
-                
-                if queue_position > 1:
-                    vk_session.method('messages.send', {
-                        'user_id': user_id,
-                        'message': f'Перед вами {queue_position - 1} человек, ожидайте',
-                        'random_id': 0
-                    })
 
 if __name__ == '__main__':
     main()
