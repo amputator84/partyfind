@@ -3,6 +3,8 @@ from vk_api.longpoll import VkLongPoll, VkEventType
 import requests
 import time
 from datetime import datetime, timedelta
+from collections import defaultdict, deque
+import threading
 import config
 import logging
 
@@ -15,6 +17,18 @@ logger = logging.getLogger(__name__)
 
 # Словарь для отслеживания активных поисков пользователей
 active_searches = {}
+# Блокировка для потокобезопасного доступа к общим данным
+lock = threading.Lock()
+# Счетчик городов для каждого пользователя
+user_city_count = defaultdict(int)
+# Текущий обрабатываемый город для пользователя
+user_current_city = {}
+# Очередь пользователей (не городов)
+user_queue = deque()
+# Флаг работы обработчика очереди
+queue_processor_running = False
+# Поток обработчика очереди
+queue_thread = None
 
 def auth():
     vk_session = vk_api.VkApi(token=config.vk_token)
@@ -62,7 +76,6 @@ def get_events(city_id, city_name, event_ses, vk_ses):
                 arr_link_vk_all.append(event['screen_name'])
         time.sleep(0.5)
     return arr_link_vk_all
-
 
 def get_group_info(group_ids):
     group_info = []
@@ -167,9 +180,7 @@ def get_events_from_city_web(city, week, event_ses, vk_ses):
                 if start_date and start_date > int(datetime.now().timestamp()):
                     start_date_formatted = datetime.fromtimestamp(start_date).strftime('%d.%m.%Y')
                     screen_name_link = event.get('screen_name')
-                    name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}',
-                                                                                                               ' ').replace(
-                        '|', ' ')
+                    name = event.get('name', '').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace('|', ' ')
 
                     if city_event.get('title'):
                         event_tuple = (city_event['title'], name, start_date_formatted)
@@ -192,9 +203,106 @@ def get_events_from_city_web(city, week, event_ses, vk_ses):
     else:
         return False
 
+def process_user_city(user_id, city, event, vk_session):
+    """Обработка одного города для пользователя"""
+    try:
+        logger.info(f"Пользователь {user_id} ищет город: {city}")
+        events = get_events_from_city_web(city, 0, event, vk_session)
+        
+        if events is False:
+            vk_session.method('messages.send', {
+                'user_id': user_id,
+                'message': f"Не нашли тусы в городе {city}, попробуйте другой",
+                'random_id': 0,
+                'disable_web_page_preview': 1
+            })
+        else:
+            i = 0
+            for message in events:
+                if i == 0:
+                    vk_session.method('messages.send', {
+                        'user_id': user_id,
+                        'message': f"{city}\n\n" + message,
+                        'random_id': 0,
+                        'disable_web_page_preview': 1
+                    })
+                else:
+                    vk_session.method('messages.send', {
+                        'user_id': user_id,
+                        'message': message,
+                        'random_id': 0,
+                        'disable_web_page_preview': 1
+                    })
+                i += 1
+            vk_session.method('messages.send', {
+                'user_id': user_id,
+                'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
+                'random_id': 0,
+                'disable_web_page_preview': 1
+            })
+            logger.info(f"Пользователь {user_id} получил результаты для города: {city}")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке города {city} для пользователя {user_id}: {e}")
+    finally:
+        with lock:
+            # Снимаем флаг активного поиска
+            active_searches[user_id] = False
+            user_current_city.pop(user_id, None)
+            
+            # Уменьшаем счетчик городов
+            if user_id in user_city_count:
+                user_city_count[user_id] -= 1
+                if user_city_count[user_id] <= 0:
+                    del user_city_count[user_id]
+
+def queue_processor(vk_session):
+    """Фоновый обработчик очереди"""
+    global queue_processor_running
+    
+    while queue_processor_running:
+        user_data = None
+        
+        with lock:
+            if user_queue:
+                user_data = user_queue.popleft()
+        
+        if user_data:
+            user_id, city, event = user_data
+            
+            # Проверяем, не активен ли уже пользователь
+            with lock:
+                if active_searches.get(user_id, False):
+                    continue
+                active_searches[user_id] = True
+                user_current_city[user_id] = city
+            
+            # Запускаем обработку в отдельном потоке
+            thread = threading.Thread(
+                target=process_user_city,
+                args=(user_id, city, event, vk_session)
+            )
+            thread.start()
+        
+        time.sleep(0.1)  # Небольшая задержка, чтобы не нагружать CPU
+
+def start_queue_processor(vk_session):
+    """Запуск фонового обработчика очереди"""
+    global queue_processor_running, queue_thread
+    
+    if not queue_processor_running:
+        queue_processor_running = True
+        queue_thread = threading.Thread(target=queue_processor, args=(vk_session,))
+        queue_thread.daemon = True
+        queue_thread.start()
+        logger.info("Обработчик очереди запущен")
+
 def main():
     vk_session = auth()
     longpoll = VkLongPoll(vk_session)
+    
+    # Запускаем фоновый обработчик очереди
+    start_queue_processor(vk_session)
+    
     for event in longpoll.listen():
         if event.type == VkEventType.MESSAGE_NEW and event.to_me:
             message_text = event.text
@@ -207,71 +315,69 @@ def main():
                     'message': 'Привет! Введи город на русском, поищем в нём тусы',
                     'random_id': 0
                 })
+                continue
+
+            # Проверяем, не превышен ли лимит городов
+            with lock:
+                city_count = user_city_count.get(user_id, 0)
+            
+            if city_count >= 2:
+                vk_session.method('messages.send', {
+                    'user_id': user_id,
+                    'message': 'Подождите загрузки всех городов для вас и повторите запрос',
+                    'random_id': 0
+                })
+                logger.info(f"Пользователь {user_id} превысил лимит городов (2)")
+                continue
+
+            # Проверяем, есть ли у пользователя активный поиск
+            with lock:
+                is_active = active_searches.get(user_id, False)
+                current_city = user_current_city.get(user_id, 'неизвестного города')
+            
+            if is_active:
+                vk_session.method('messages.send', {
+                    'user_id': user_id,
+                    'message': f'Сейчас ищутся тусы города {current_city}',
+                    'random_id': 0
+                })
+                logger.info(f"Пользователь {user_id} пытался ввести новый город, пока идет поиск {current_city}")
+                continue
+
+            city_find = get_city_ids([message_text])
+            if city_find == 'empty':
+                vk_session.method('messages.send', {
+                    'user_id': user_id,
+                    'message': f"Не нашли город {message_text}, введите другой",
+                    'random_id': 0,
+                    'disable_web_page_preview': 1
+                })
+            elif city_find == 'error':
+                vk_session.method('messages.send', {
+                    'user_id': user_id,
+                    'message': f"Какая-то ошибка, напиши админу",
+                    'random_id': 0,
+                    'disable_web_page_preview': 1
+                })
             else:
-                # Проверяем, есть ли активный поиск для этого пользователя
-                if user_id in active_searches and active_searches[user_id]:
+                city = city_find[0]['title']
+                
+                with lock:
+                    # Увеличиваем счетчик городов
+                    user_city_count[user_id] = user_city_count.get(user_id, 0) + 1
+                    
+                    # Добавляем в очередь
+                    user_queue.append((user_id, city, event))
+                    queue_position = len(user_queue)
+                
+                logger.info(f"Пользователь {user_id} добавил город {city} в очередь. Позиция: {queue_position}")
+                
+                if queue_position > 1:
                     vk_session.method('messages.send', {
                         'user_id': user_id,
-                        'message': 'Ща-ща',
+                        'message': f'Перед вами {queue_position - 1} человек, ожидайте',
                         'random_id': 0
                     })
-                    continue
-
-                city_find = get_city_ids([message_text])
-                if city_find == 'empty':
-                    vk_session.method('messages.send', {
-                        'user_id': user_id,
-                        'message': f"Не нашли город {message_text}, введите другой",
-                        'random_id': 0,
-                        'disable_web_page_preview': 1
-                    })
-                elif city_find == 'error':
-                    vk_session.method('messages.send', {
-                        'user_id': user_id,
-                        'message': f"Какая-то ошибка, напиши админу",
-                        'random_id': 0,
-                        'disable_web_page_preview': 1
-                    })
-                else:
-                    # Устанавливаем флаг активного поиска
-                    active_searches[user_id] = True
-                    try:
-                        city = city_find[0]['title']
-                        events = get_events_from_city_web(city, 0, event, vk_session)
-                        if events is False:
-                            vk_session.method('messages.send', {
-                                'user_id': user_id,
-                                'message': f"Не нашли тусы в городе {city}, попробуйте другой",
-                                'random_id': 0,
-                                'disable_web_page_preview': 1
-                            })
-                        else:
-                            i = 0
-                            for message in events:
-                                if i == 0:
-                                    vk_session.method('messages.send', {
-                                        'user_id': user_id,
-                                        'message': f"{city}\n\n" + message,
-                                        'random_id': 0,
-                                        'disable_web_page_preview': 1
-                                    })
-                                else:
-                                    vk_session.method('messages.send', {
-                                        'user_id': user_id,
-                                        'message': message,
-                                        'random_id': 0,
-                                        'disable_web_page_preview': 1
-                                    })
-                                i += 1
-                            vk_session.method('messages.send', {
-                                'user_id': user_id,
-                                'message': f"Выше тусы города {city} \n\n#тусынавыхи Остальное clck.ru/3KMog8",
-                                'random_id': 0,
-                                'disable_web_page_preview': 1
-                            })
-                    finally:
-                        # Снимаем флаг активного поиска в любом случае
-                        active_searches[user_id] = False
 
 if __name__ == '__main__':
     main()
