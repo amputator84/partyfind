@@ -38,3 +38,5 @@ https://docs.aiogram.dev/en - aiogram
 https://t.me/mishgenai - подписка на картинки вместо доната  
 https://vk.com/tusinavixi - паблик для тус  
 https://clck.ru/3KMog8 - гуглотаблица, дублируемая из events.csv
+
+На текущий момент не особо работает, в связи с длинной шапкой. Прокачиваем простого бота внутри ВК - bot_vk.py
